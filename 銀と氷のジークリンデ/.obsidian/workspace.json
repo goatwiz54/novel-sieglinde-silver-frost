@@ -1,0 +1,266 @@
+{
+  "main": {
+    "id": "0e096a409980404e",
+    "type": "split",
+    "children": [
+      {
+        "id": "5f5043777ffa8e3c",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "5ce38c7eeb194e0b",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "30_設計/09_ストーリー概要設計/ストーリー・超概要.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "ストーリー・超概要"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "e613cf7be40c6f44",
+    "type": "split",
+    "children": [
+      {
+        "id": "9a2e84ea5afc3141",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "f97c35eb6152f8d4",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "ファイルエクスプローラ"
+            }
+          },
+          {
+            "id": "7a3339fbc7e883ce",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "なんてことだ",
+                "matchingCase": false,
+                "explainSearch": true,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "検索"
+            }
+          },
+          {
+            "id": "17892f01a80e0f38",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "ブックマーク"
+            }
+          }
+        ],
+        "currentTab": 1
+      }
+    ],
+    "direction": "horizontal",
+    "width": 414.5
+  },
+  "right": {
+    "id": "b843e4b0fe860d4c",
+    "type": "split",
+    "children": [
+      {
+        "id": "403af32759093d3f",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "85dd00eb93386595",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "memo/2025/2025-12/2025-12-23@1（火）ミレイヤ.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "2025-12-23@1（火）ミレイヤへのバックリンク"
+            }
+          },
+          {
+            "id": "af1cedb9118f84f3",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "memo/2025/2025-12/2025-12-23@1（火）ミレイヤ.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "2025-12-23@1（火）ミレイヤからのアウトゴーイングリンク"
+            }
+          },
+          {
+            "id": "e4a3b3e09a3bd994",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "すべてのプロパティ"
+            }
+          },
+          {
+            "id": "88b47cbba71b7323",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "memo/2025/2025-12/2025-12-23@1（火）ミレイヤ.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "2025-12-23@1（火）ミレイヤのアウトライン"
+            }
+          },
+          {
+            "id": "67775c5bea17ed02",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "タグ"
+            }
+          }
+        ],
+        "currentTab": 4
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:クイックスイッチャーを開く": false,
+      "graph:グラフビューを開く": false,
+      "canvas:新規キャンバスを作成": false,
+      "daily-notes:今日のデイリーノートを開く": false,
+      "templates:テンプレートを挿入": false,
+      "command-palette:コマンドパレットを開く": false,
+      "bases:Create new base": false
+    }
+  },
+  "floating": {
+    "id": "07cd2e4eaabcd35f",
+    "type": "floating",
+    "children": [
+      {
+        "id": "8641700e36b60484",
+        "type": "window",
+        "children": [
+          {
+            "id": "30c8f670e53e592e",
+            "type": "tabs",
+            "children": [
+              {
+                "id": "48958ef5fba6c592",
+                "type": "leaf",
+                "state": {
+                  "type": "empty",
+                  "state": {},
+                  "icon": "lucide-file",
+                  "title": "新規タブ"
+                }
+              }
+            ]
+          }
+        ],
+        "direction": "vertical",
+        "x": 712,
+        "y": 68,
+        "width": 1161,
+        "height": 975,
+        "maximize": true,
+        "zoom": 0
+      }
+    ]
+  },
+  "active": "48958ef5fba6c592",
+  "lastOpenFiles": [
+    "70_本編/第9話　紅蓮の瞳に映る狼.md",
+    "70_本編/第9話.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第9話.md",
+    "30_設計/70_本編設計/40_話の設計/無題のファイル.md",
+    "70_本編/下書き比較.md",
+    "70_本編/第8話　記憶の中の青き月.md",
+    "70_本編/第8話　青い月の下で.md",
+    "70_本編/第8話 青い月の下で.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第8話｜1　青い月の下で.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第8話　青い月の下で.md",
+    "30_設計/70_本編設計/20_シーン設計/設計・8｜叙任の間.md",
+    "30_設計/70_本編設計/20_シーン設計/無題のファイル 1.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第8話　悪夢と.md",
+    "70_本編/無題のファイル.md",
+    "30_設計/09_ストーリー概要設計/ストーリー・超概要.md",
+    "🥚/第1話　大丈夫！石食い鳥の卵は落とさない！.md",
+    "🥚",
+    "無題のフォルダ",
+    "無題のファイル.canvas",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第7話　懲罰兵のレンドル.md",
+    "30_設計/70_本編設計/30_ミクロ設計/詳細・3. 君の名前を教えてくれないか.md",
+    "70_本編/第6話　騎士のレンドル.md",
+    "70_本編/第7話　懲罰兵のレンドル.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第8話　侮辱の果て.md",
+    "30_設計/10_ストーリー構成設計/第1部/03_EP設計/第7話.md",
+    "70_本編/第5話　証紋と命令.md",
+    "30_設計/70_本編設計/40_話の設計/第8話　懲罰兵のレンドル.md",
+    "30_設計/70_本編設計/40_話の設計/第7話　懲罰兵のレンドル.md",
+    "70_本編/第7話　懲罰兵レンドル.md",
+    "30_設計/10_ストーリー構成設計/第1部/03_EP設計",
+    "30_設計/02_世界のルール",
+    "30_設計/10_ストーリー構成設計/第1部/02_章の構成",
+    "30_設計/10_ストーリー構成設計/第1部/01_部の構成",
+    "30_設計/10_ストーリー構成設計/第1部",
+    "30_設計/10_ストーリー構成設計/第1部｜第1章｜第1話/02_章の構成",
+    "30_設計/10_ストーリー構成設計/第1部｜第1章｜第1話/01_部の構成",
+    "30_設計/10_ストーリー構成設計/第1部｜第1章｜第1話/部",
+    "97_assets/Pasted image 20251221204634.png",
+    "97_assets/Pasted image 20251221204602.png",
+    "97_assets/Pasted image 20251221203230.png",
+    "無題のファイル 1.canvas"
+  ]
+}

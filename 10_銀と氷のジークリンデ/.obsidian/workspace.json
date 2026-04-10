@@ -1,0 +1,233 @@
+{
+  "main": {
+    "id": "0e096a409980404e",
+    "type": "split",
+    "children": [
+      {
+        "id": "86e66d05b8f82b55",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a17bdef40211edcb",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット――闇の森の千の牙/下書き｜第44話3　冒険者都市ダルトハット――闇の森の千の牙.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "下書き｜第44話3　冒険者都市ダルトハット――闇の森の千の牙"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "e613cf7be40c6f44",
+    "type": "split",
+    "children": [
+      {
+        "id": "9a2e84ea5afc3141",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "f97c35eb6152f8d4",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "ファイルエクスプローラ"
+            }
+          },
+          {
+            "id": "7a3339fbc7e883ce",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "惑",
+                "matchingCase": false,
+                "explainSearch": true,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "検索"
+            }
+          },
+          {
+            "id": "17892f01a80e0f38",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "ブックマーク"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 414.5
+  },
+  "right": {
+    "id": "b843e4b0fe860d4c",
+    "type": "split",
+    "children": [
+      {
+        "id": "403af32759093d3f",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "85dd00eb93386595",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "memo/2025/2025-12/2025-12-23@1（火）ミレイヤ.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "2025-12-23@1（火）ミレイヤへのバックリンク"
+            }
+          },
+          {
+            "id": "af1cedb9118f84f3",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "memo/2025/2025-12/2025-12-23@1（火）ミレイヤ.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "2025-12-23@1（火）ミレイヤからのアウトゴーイングリンク"
+            }
+          },
+          {
+            "id": "e4a3b3e09a3bd994",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "すべてのプロパティ"
+            }
+          },
+          {
+            "id": "88b47cbba71b7323",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "memo/2025/2025-12/2025-12-23@1（火）ミレイヤ.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "2025-12-23@1（火）ミレイヤのアウトライン"
+            }
+          },
+          {
+            "id": "67775c5bea17ed02",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "タグ"
+            }
+          }
+        ],
+        "currentTab": 4
+      }
+    ],
+    "direction": "horizontal",
+    "width": 200
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:クイックスイッチャーを開く": false,
+      "graph:グラフビューを開く": false,
+      "canvas:新規キャンバスを作成": false,
+      "daily-notes:今日のデイリーノートを開く": false,
+      "templates:テンプレートを挿入": false,
+      "command-palette:コマンドパレットを開く": false,
+      "bases:Create new base": false,
+      "obsidian-memos:Thino": false,
+      "copilot:Open Copilot Chat": false
+    }
+  },
+  "active": "a17bdef40211edcb",
+  "lastOpenFiles": [
+    "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット――闇の森の千の牙/無題のファイル.md",
+    "70_本編/カクヨム/第2章　賢者の銀瞳/第44話　冒険者都市ダルトハット――冒険者の勘.md",
+    "70_本編/カクヨム/第2章　賢者の銀瞳/第45話　闇の森の千牙.md",
+    "70_本編/カクヨム/第2章　賢者の銀瞳/第42話　冒険者都市ダルトハット――護衛依頼終了.md",
+    "70_本編/カクヨム/第2章　賢者の銀瞳/第43話　冒険者都市ダルトハット――銀貨十枚の依頼.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット――闇の森の千の牙/下書き｜第44話4　冒険者都市ダルトハット――闇の森の千の牙.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第40話/下書き｜第40話.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第40話/第40話　裏切りの系譜、あるいは供物の真実1.md",
+    "70_本編/カクヨム/第2章　賢者の銀瞳/第44話　闇の森の千牙.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第38話/下書き｜第38話-2　星護りのカルドラ.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット――闇の森の千の牙/下書き｜第44話3　冒険者都市ダルトハット――闇の森の千の牙.md",
+    "daily/2026-02-19　ラクア.md",
+    "daily/2026-02-19　アプナ.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット――闇の森の千の牙/下書き｜第44話2　冒険者都市ダルトハット――闇の森の千の牙.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット――闇の森の千の牙/下書き｜第44話1　冒険者都市ダルトハット――闇の森の千の牙.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット――闇の森の千の牙/下書き｜第44話1　闇の森の千の牙.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット――闇の森の千の牙/下書き｜第44話　冒険者都市ダルトハット.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット――闇の森の千の牙",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第42話　冒険者都市ダルトハット――護衛依頼終了/下書き｜第41話-4　本稿まえ4.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第42話　冒険者都市ダルトハット――護衛依頼終了/下書き｜第41話-3　校正.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第42話　冒険者都市ダルトハット――護衛依頼終了/下書き｜第41話-3　本稿まえ3.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第42話　冒険者都市ダルトハット――護衛依頼終了/下書き｜第41話-3　本稿まえ2.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第42話　冒険者都市ダルトハット――護衛依頼終了/下書き｜第41話-3　本稿まえ1.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第42話　冒険者都市ダルトハット――護衛依頼終了/下書き｜第41話-2　下書き.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第42話　冒険者都市ダルトハット――護衛依頼終了/下書き｜第41話-1　プロット.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第42話　冒険者都市ダルトハット――護衛依頼終了",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第43話　冒険者都市ダルトハット――銀貨十枚の依頼",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット/下書き｜第44話　冒険者都市ダルトハット.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第43話　闇の森の千牙/下書き｜第43話2　闇の森の千の牙.md",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第44話　冒険者都市ダルトハット",
+    "30_設計/70_本編設計/40_話の設計/無題のフォルダ",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第43話　闇の森の千牙",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第41話　ラダトイムの三十人",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第42話　冒険者都市ダルトハット",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第41話　冒険者都市ダルトハット",
+    "30_設計/70_本編設計/40_話の設計/下書き｜第40話/第41話6.bak",
+    "Pasted image 20260124154720.png",
+    "無題のファイル.canvas",
+    "97_assets/Pasted image 20251221204634.png",
+    "97_assets/Pasted image 20251221204602.png",
+    "97_assets/Pasted image 20251221203230.png",
+    "無題のファイル 1.canvas"
+  ]
+}
