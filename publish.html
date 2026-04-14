@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+  <html lang="ja">
+  <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>novel-sieglinde-silver-frost</title>
+      <style>
+      @charset "UTF-8";
+      :root {
+        --font-size: 3.9466666666666663mm
+      }
+      html {
+      orphans: 1;
+      widows: 1;
+      color: black;
+      }
+
+      body{
+        writing-mode: vertical-rl;
+        color: black;
+      }
+
+      * {
+      margin: 0;
+      padding: 0;
+      }
+
+      @page {
+        size: 148mm 210mm;
+        block-size: calc(3.9466666666666663mm * 1.75 * 18 + (3.9466666666666663mm * 0.4));
+        margin-top: 10%;
+        margin-bottom: 10%;
+        margin-left: 8%;
+        margin-right: 8%;
+        /* 以下、マージンボックスに継承される */
+        font-size: 6pt;
+        font-family: "游明朝", "YuMincho", serif;
+        /* 本来不要（<span class="smaller"><span class="smaller">ルート要素の指定が継承される</span></span>）だが、現時点のvivliostyle.jsの制限により必要 */
+        vertical-align: top;
+      }
+
+      @page : first {
+        counter-reset: page 0;
+      }
+
+      @page :left {
+        margin-right: 6%;
+        margin-left: 10%;
+        @bottom-left {
+          content: "novel-sieglinde-silver-frost 42字×18行 "counter(page)"";
+          margin-left: 0mm;
+          margin-bottom: 5%;
+          writing-mode: horizontal-tb;
+          font-size:10q;
+          /* CSS仕様上は@pageルール内に書けばよいが、現時点のvivliostyle.jsの制限によりここに書く */
+      }
+    }
+      
+      @page :right {
+        margin-left: 6%;
+        margin-right: 10%;
+        /* border-bottom: 1pt solid black; */
+      /* 右下ノンブル */
+      @bottom-right {
+          content: "novel-sieglinde-silver-frost 42字×18行 "counter(page)"";
+          margin-right: 0mm;
+          margin-bottom: 5%;
+          writing-mode: horizontal-tb;
+          font-size:10q;
+          /* CSS仕様上は@pageルール内に書けばよいが、現時点のvivliostyle.jsの制限によりここに書く */
+      }
+      }
+  
+      html {
+      font-family: "游明朝", "YuMincho", serif;
+      font-weight: Medium;
+      text-align: justify;
+      hanging-punctuation: allow-end;
+      text-spacing: none;
+      }
+  
+      body{
+        break-before: left;
+
+        
+      }
+  
+      div#draft{
+        inline-size: calc(165.76mm + 0.5em);
+        margin-inline-start: auto;
+        margin-inline-end: auto;
+      }
+
+      h1 {
+        /* 五行トリ2倍角 */
+        display:flex;
+        align-items: center;
+        block-size: calc(3.9466666666666663mm * 1.75 * 5);
+        /* フォント */
+        font-weight: Extrabold;
+        letter-spacing: 0.25em;
+        font-size: calc(3.9466666666666663mm * 2);
+        /* 字下げ */
+        text-indent: 0;
+        /* 直後の改ページ・改段禁止 */
+      }
+  
+      h2 {
+        /* 二行トリ1.6倍角 */
+        display:flex;
+        align-items: center;
+        block-size: calc(3.9466666666666663mm * 1.75 * 2);
+        /* フォント */
+        font-weight: Extrabold;
+        font-size: calc(3.9466666666666663mm * 1.6);
+        /* 字下げ */
+        text-indent: calc(3.9466666666666663mm * 1 * 1);
+        /* 直後の改ページ・改段禁止 */
+      }
+
+      h3 {
+        /* 一行トリ1.2倍角 */
+        display:flex;
+        align-items: center;
+        block-size: calc(3.9466666666666663mm * 1.75);
+        /* フォント */
+        font-weight: demi-bold;
+        font-size: calc(3.9466666666666663mm * 1.2);
+        /* 字下げ */
+        text-indent: calc(3.9466666666666663mm * 1 * 1);
+        /* 直後の改ページ・改段禁止 */
+        page-break-after:avoid;
+      }
+
+      h4,h5,h6 {
+        /* 一行トリ1.2倍角 */
+        display:flex;
+        align-items: center;
+        block-size: calc(3.9466666666666663mm * 1.75);
+        /* フォント */
+        font-weight: demi-bold;
+        font-size: calc(3.9466666666666663mm * 1);
+        /* 字下げ */
+        text-indent: calc(3.9466666666666663mm * 1 * 1);
+        /* 直後の改ページ・改段禁止 */
+        page-break-after:avoid;
+      }
+
+      h1 + h2 {
+      margin-block-start: 16pt;
+      }
+
+      p + h3 {
+        margin-block-start: calc(3.9466666666666663mm * 1.75);
+      }
+      
+      p.ruby-offset {
+       margin-right: -0.15em;
+      }
+
+      body.vertical-rl ruby > rt {
+        font-size: 0.5em;
+        width: 0.75em;
+      }
+
+      body.horizontal-tb ruby > rt {
+        font-size: 0.5em;
+        width: 0.75em;
+      }
+
+      p {
+        font-size: 3.9466666666666663mm;
+        line-height: 1.75;
+        inline-size: calc(165.76mm + 0.5em);
+        text-indent: 0em;
+        hanging-punctuation: allow-end;
+        line-break:strict;
+        page-break-inside: auto;
+      }
+
+    div.indent-1 p:first-of-type, div.indent-2 p:first-of-type, div.indent-3 p:first-of-type{
+      padding-block-start: calc( 3.9466666666666663mm * 1.75);
+      }
+
+      div.indent-1 p:last-of-type, div.indent-2 p:last-of-type, div.indent-3 p:last-of-type{
+      padding-block-end: calc( 3.9466666666666663mm * 1.75);
+      }
+
+    
+    div.indent-1 p{
+    inline-size: calc( calc(165.76mm + 0.5em) - 3.9466666666666663mm);
+    padding-inline-start: calc( 3.9466666666666663mm);
+    }
+
+    div.indent-2 p{
+    inline-size: calc( calc(165.76mm + 0.5em) - (3.9466666666666663mm * 2));
+    padding-inline-start: calc(3.9466666666666663mm * 2);
+    }
+
+    div.indent-3 p{
+    inline-size: calc( calc(165.76mm + 0.5em) - (3.9466666666666663mm * 3));
+    padding-inline-start: calc(3.9466666666666663mm * 3);
+    }
+
+    p.goth {
+    margin-inline-start: 3em;
+    font-family: "游ゴシック", "YuGothic", san-serif;
+    margin-block-start: 1em;
+    margin-block-end: 1em;
+    }
+
+    p.align-rb {
+    text-align: end;
+    }
+
+    p.goth + p.goth {
+    margin-block-start: -1em;
+    }
+
+    div.codes {
+    display: inline-block;
+    margin: 3em 1em;
+    writing-mode: horizontal-tb;
+    padding: 1em;
+    font-family: "Courier", monospace;
+    font-size: 0.8em;
+    }
+  
+    div.codes p {
+    text-orientation: sideways;
+    }
+
+    p.star {
+    text-indent: 3em;
+    margin-right: 16pt;
+    margin-left: 16pt;
+    }
+
+    hr {
+    border: none;
+    border-right: 1pt solid black;
+    block-size: 6em;
+    margin: auto 8.5pt;
+    }
+
+    /* 縦中横 */
+    .tcy {
+    -webkit-text-combine: horizontal;
+    text-combine: horizontal;
+    -ms-text-combine-horizontal: all;
+    text-combine-horizontal: digit 2;
+    text-combine-upright: digit 2;
+    }
+
+    span.bottom {
+      display: block;
+      float: right;
+    }
+    
+    span.bottom-1 {
+      display: block;
+      float: right;
+      padding-inline-end: 1em;
+    }
+    
+    span.bottom-2 {
+      display: block;
+      float: right;
+      padding-inline-end: 2em;
+    }
+    
+    span.bottom-3 {
+      display: block;
+      float: right;
+      padding-inline-end: 3em;
+    }
+        
+
+    /* 圏点（<span class="smaller">ゴマ</span>） */
+    em.side-dot, em.sesame_dot {
+    font-style: normal;
+    -webkit-text-emphasis-style: sesame;
+    text-emphasis-style: sesame;
+    margin-block-start: -1em;
+    display: inline-block;
+    }
+
+    /*著作者*/
+    .author {
+    position: absolute;
+    bottom: 0;
+    font-size: 8.5pt;
+    margin-inline-start: 50pt;
+    letter-spacing: normal;
+    }
+
+    /*画像＋キャプション*/
+    figure {
+    display: block;
+    width: 236pt;
+    -ms-writing-mode: lr-tb;
+    -webkit-writing-mode: horizontal-tb;
+    writing-mode: horizontal-tb;
+    }
+
+    figure img {
+    width: 100%;
+    block-size: auto;
+    vertical-align: bottom;
+    }
+
+    figcaption {
+    text-align: start;
+    font-size: 7pt;
+    }
+
+    /*奥付*/
+    .colophon {
+    font-size: 7pt;
+    margin-right: 48pt;
+    }
+    /* 級さげ */
+    span.smaller{
+        font-size:6.5pt
+    }
+  
+    div.comment {
+        display:none;
+    }
+
+    p.blank {
+        color:transparent;
+    }
+
+    span.blank{
+      display:none;
+    }
+    </style>
+  </head>
+  <body class="vertical-rl">
+  <div id="draft">
+  <p id="l-0">　誰が言ったか分からないが、英雄と呼ばれる人はみな【加護】を持っている。</p><p id="l-1">　英雄譚の剣士も、伝説の雷の魔法使いも、みんなそうだ。</p><p id="l-2" class="blank">_</p><p id="l-3" class="ruby-offset">　母さんを殺した魔獣【<ruby>古の銀狼<rt>いにしえのぎんろう</rt></ruby>】も、加護を持つ者なら、倒せたのかもしれない。</p><p id="l-4" class="blank">_</p><p id="l-5">　俺には、それがなかった。</p><p id="l-6">　剣すら、抜けなかった。</p><p id="l-7" class="blank">_</p><p id="l-8">「レンドル」<span id="cursor" class="blank">↩︎</span></p><p id="l-9" class="blank">_</p><p id="l-10">　血の匂いだ。</p><p id="l-11">　手が、真っ赤だ。</p><p id="l-12" class="blank">_</p><p id="l-13">　――母さんが、倒れている。</p><p id="l-14" class="blank">_</p><p id="l-15">　母に手を伸ばす。</p><p id="l-16">　指が、滑る。</p><p id="l-17" class="blank">_</p><p id="l-18">「レンドル！！」</p><p id="l-19" class="blank">_</p><p id="l-20">　息が詰まる。</p><p id="l-21">　視界が跳ねた。</p><p id="l-22" class="blank">_</p><p id="l-23">　目の前にロッサルの顔があった。同室の仲間だ。</p><p id="l-24">　レンドルは息を整え、ゆっくりと頷いた。</p><p id="l-25" class="blank">_</p><p id="l-26">「ロッサルか。……大丈夫だ」</p><p id="l-27">「いつもの夢か？　汗がひどいぞ」</p><p id="l-28">「そうだ。……母さんが、俺の目の前で殺される」</p><p id="l-29">「……悪夢だな」</p><p id="l-30">　いつも表情を出さないロッサルも、数週間の付き合いで、眉間にしわが寄るようになった。心配してくれているのが分かる。仲間思いのいい友人だ。</p><p id="l-31" class="blank">_</p><p id="l-32">「その悪夢を終わらせるには、銀狼を殺すしかないんだろうな」</p><p id="l-33">「殺すって、伝説の魔獣だぞ……どうやって」</p><p id="l-34">「とにかく、強くならないとな」</p><p id="l-35" class="blank">_</p><p id="l-36">　ロッサルは、それ以上聞かなかった。</p><p id="l-37">　レンドルは天井を見上げ、自分の手を見た。</p><p id="l-38">　心臓がまだ、速く打っていた。</p><p id="l-39" class="blank">_</p><p id="l-40" class="ruby-offset">　<ruby>目蓋<rt>まぶた</rt></ruby>が重い。連日の訓練で、体の節々が鈍く痛む。</p><p id="l-41">　革鎧の留め具に手をかけていると、ロッサルが部屋の扉に手を掛けた。</p><p id="l-42" class="blank">_</p><p id="l-43">「先に行ってるぞ。剣戦場に急いだほうがいい」</p><p id="l-44">「そうだな、すぐに行く」</p><p id="l-45">　短いやり取りの後、ロッサルは部屋を出て行った。</p><p id="l-46" class="blank">_</p><p id="l-47">　レンドルは、枕元の小さな手鏡を手に取った。</p><p id="l-48" class="ruby-offset">　目の下にくまができている。頬には昨日の打ち身の痕。疲労が顔に、随分と<ruby>滲み<rt>にじ</rt></ruby>出ていた。</p><p id="l-49" class="blank">_</p><p id="l-50">　――ひどいな。訓練だけじゃない。あまり眠れていないからか。</p><p id="l-51" class="blank">_</p><p id="l-52">　赤髪が寝癖でぼさぼさに広がっている。手で押さえても、どうにもならなかった。</p><p id="l-53">　レンドルは準備を整え、剣戦場へ向かった。</p><p id="l-54" class="blank">_</p><p id="l-55" class="blank">_</p><p id="l-56" class="blank">_</p><p id="l-57">　木柵で囲われた剣戦場に着くと、訓練生たちがすでに集まっていた。</p><p id="l-58" class="blank">_</p><p id="l-59">　鍛冶屋の息子、貿易商人の倅、貴族のお坊ちゃんに、孤児院出の……いろいろな奴がここにいる。</p><p id="l-60">　女もたくさんいる。使えるやつは使う。魔法が使えるなら、なおさらだ。</p><p id="l-61" class="blank">_</p><p id="l-62">　――今は、俺たちサンガード皇国と、皇帝陛下を暗殺したルベリア王国との戦争の最中だった。</p><p id="l-63">　そして、エルフの森とも、建国以来長いこと、小競り合いが続いていた。</p><p id="l-64" class="blank">_</p><p id="l-65">　戦場はいつも人手不足と、上官達はボヤいていた。</p><p id="l-66">　いつ今日から正規兵士だ喜べ、と肩を叩かれるのか。</p><p id="l-67">　誰だろうと関係がない。順番待ちだ。</p><p id="l-68" class="blank">_</p><p id="l-69">　レンドルは入り口で足を止め、剣戦場をじっと見つめた。</p><p id="l-70">　この剣戦場は、あえて柔らかい土と、砂利や細かい石が散りばめられて作られている。</p><p id="l-71">　滑ることもあるし、わざと滑り込むこともある。石を踏んでバランスを崩すこともある。</p><p id="l-72">　そうなった後に、どう動くかを学ぶための場所だ。</p><p id="l-73">　――銀狼と戦う場所は、草原だと素早い動きに対応できない。身を隠しながら戦える林か。それに、一人で戦って勝てる相手じゃない。仲間が必要だ。</p><p id="l-74" class="blank">_</p><p id="l-75">　レンドルは銀狼との戦いを考えながら、訓練生の列の端に腰を下ろした。</p><p id="l-76">　少し離れたところにロッサルが座っているのが見えたが、他の訓練生と話し込んでいるようだった。</p><p id="l-77" class="blank">_</p><p id="l-78">　まだ教官は来ていない。</p><p id="l-79" class="blank">_</p><p id="l-80" class="ruby-offset">　しばらくすると、<ruby>目蓋<rt>まぶた</rt></ruby>が、じわりと落ちてくる。</p><p id="l-81">　――またか。抗えない。今日はひどい。</p><p id="l-82" class="blank">_</p><p id="l-83" class="blank">_</p><p id="l-84" class="blank">_</p><p id="l-85">　青い月が揺れている。</p><p id="l-86">　池の水面に映った月だ。美しいと思った。だから俺は駆け出した。</p><p id="l-87" class="blank">_</p><p id="l-88">　次の瞬間、闇の中に銀色が揺らいだ。</p><p id="l-89" class="blank">_</p><p id="l-90">　音もない。</p><p id="l-91">　気配もない。</p><p id="l-92">　銀色に光る狼がそこにいた。</p><p id="l-93" class="blank">_</p><p id="l-94">　母の声がした。剣を取りなさい、と。</p><p id="l-95">　――抜けなかった。</p><p id="l-96" class="blank">_</p><p id="l-97" class="blank">_</p><p id="l-98" class="blank">_</p><p id="l-99">「レンドル！　レンドルはいないのか！」</p><p id="l-100">　その大声で目覚めた。また眠ってしまっていた。</p><p id="l-101" class="blank">_</p><p id="l-102">「います！　ブルード教官！」</p><p id="l-103" class="blank">_</p><p id="l-104">　精悍な顔立ちの男は、刃の潰れたロングソードを右肩に乗せて、こちらを見ている。</p><p id="l-105">　よく手入れのされた訓練用の革鎧に身を包んでいた。</p><p id="l-106">　細かな傷、補修の跡が所々にあり、長年使い込まれているのが一目でわかる。</p><p id="l-107">　油が満遍なく染み込み、丁寧に補修されていた。</p><p id="l-108" class="blank">_</p><p id="l-109">　レンドルたちが使うのは実戦の剣だ。</p><p id="l-110">　この人に勝てなければ、仇を討つなんて、できやしない。</p><p id="l-111">　――銀狼には、届かない。</p><p id="l-112" class="blank">_</p><p id="l-113">　疲れがどうした。銀狼を前にしたとき、言い訳になるはずがない。</p><p id="l-114" class="blank">_</p><p id="l-115">　剣を、鞘から抜いた。</p><p id="l-116" class="blank">_</p><p id="l-117">　訓練生たちの目が一斉にレンドルへ向いた。眠っていた、とは誰も口にしない。ただ、寝起きの顔で剣戦場の中央へ歩いていく赤髪の背中を、全員が黙って見ていた。</p><p id="l-118">　足取りに迷いはなく、ただまっすぐに、ブルードのいる中央へ向かっていた。</p><p id="l-119" class="blank">_</p>
+  </div>
+  </body>
+  </html>
