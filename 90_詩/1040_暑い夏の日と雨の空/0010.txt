@@ -1,0 +1,9 @@
+[Mood | melancholic, quiet longing, intimate, still, nocturnal][Vocal | female solo vocal, close-mic pulled-inward, clear crystalline voice, pure tone, firm focus, articulate phrasing, minimal vibrato, no harmony]
+[Instruments | piano, ambient synth pad, light brush drums, sparse bass, subtle clean guitar in bridge]
+[Mix | vocal center, vocal-forward but intimate, very short room ambience, minimal reverb, gentle compression, soft de-ess, clean 200–400Hz mud]
+[Structure | Intro 2 bars → Verse 1 → Pre-Chorus → Chorus → Post-Chorus → Verse 2 → Bridge → Chorus → Chorus → Outro]
+[Key | A minor]
+[Exclude | shout, shouting, screams, vocal ad-libs, vocal frills, vocalizer, "hoo", "whoo", "yeah", humming, scat, male shouts, choir, group harmonies, vocal doubles]
+
+[Intro: high-definition pristine piano arpeggio alternating with aggressive electric guitar, razor-sharp percussive picking, forceful hard attacks, cutting edge tone, crisp high-fidelity instrument definition, no vocals]
+[Instrumental Break: absolute silence for vocals, clean instrumental only, no voice, no breathing]
