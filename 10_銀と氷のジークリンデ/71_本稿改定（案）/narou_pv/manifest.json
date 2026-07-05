@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "KASASAGI PV Updater",
+  "version": "1.0",
+  "permissions": [
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://script.google.com/macros/s/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
