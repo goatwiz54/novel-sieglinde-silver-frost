@@ -44,6 +44,8 @@ const TEN_MINUTE_TRIGGER_LABEL = "最新化";
 const TEN_MINUTE_PROCESSING_MARK = "◆";
 const TEN_MINUTE_SUCCESS_MARK = "✅";
 const TEN_MINUTE_FAIL_MARK = "💀";
+const TEN_MINUTE_HEATMAP_SHEET_NAME = "10分集計ヒートマップ";
+const TEN_MINUTE_HEATMAP_RETRY_MARK = "未処理";
 
 const TEN_MINUTE_DATE_ROW = 2;
 const TEN_MINUTE_DATA_START_ROW = 3; // 00:00の行
@@ -67,8 +69,22 @@ function installedOnEdit(e) {
 
   const range = e.range;
   const sheet = range.getSheet();
+  const sheetName = sheet.getName();
 
-  if (sheet.getName() !== CONFIG.TEN_MINUTE_SHEET_NAME) return;
+  if (sheetName === CONFIG.TEN_MINUTE_SHEET_NAME) {
+    handleTenMinuteSheetEdit_(e);
+    return;
+  }
+
+  if (sheetName === TEN_MINUTE_HEATMAP_SHEET_NAME) {
+    handleTenMinuteHeatmapSheetEdit_(e);
+  }
+}
+
+function handleTenMinuteSheetEdit_(e) {
+  const range = e.range;
+  const sheet = range.getSheet();
+
   if (range.getRow() !== 1) return;
 
   const value = range.getValue();
@@ -93,6 +109,39 @@ function installedOnEdit(e) {
     } else {
       sheet.getRange(1, range.getColumn()).setValue(`💀:${err.toString()}`);
     }
+  }
+}
+
+function handleTenMinuteHeatmapSheetEdit_(e) {
+  const range = e.range;
+  const sheet = range.getSheet();
+
+  if (range.getColumn() !== 1) return;
+  if (range.getRow() === 1) return;
+
+  const value = range.getValue();
+
+  if (value !== TEN_MINUTE_HEATMAP_RETRY_MARK) return;
+
+  range.setValue(TEN_MINUTE_PROCESSING_MARK);
+  SpreadsheetApp.flush();
+
+  try {
+    const row = range.getRow();
+    const dateCellValue = sheet.getRange(row, 2).getDisplayValue();
+    const normalizedDateStr = resolveSheetDateStr_(dateCellValue);
+
+    if (!normalizedDateStr) {
+      sheet.getRange(row, 1).setValue(`${TEN_MINUTE_FAIL_MARK}:日付が読み取れません(値="${dateCellValue}")`);
+      return;
+    }
+
+    updateTenMinuteHeatmapRowByDate_(sheet.getParent(), normalizedDateStr, row);
+
+    sheet.getRange(row, 1).setValue(TEN_MINUTE_SUCCESS_MARK);
+  } catch (err) {
+    console.log(`【10分集計ヒートマップ】想定外のエラー: ${err.stack || err}`);
+    range.setValue(`${TEN_MINUTE_FAIL_MARK}:${err.toString()}`);
   }
 }
 
@@ -228,6 +277,7 @@ function updateTenMinuteColumn_(sheet, col) {
 
   writeTenMinuteColumnValues_(sheet, col, countByBucket);
   applyTenMinuteHeatmapForColumn_(sheet, col);
+  updateTenMinuteHeatmapRowByDate_(ss, sheetDateStr);
 
   if (checkboxMode) {
     statusCell.setValue(false);
@@ -236,6 +286,155 @@ function updateTenMinuteColumn_(sheet, col) {
   }
 
   ss.toast(`10分集計を更新しました: ${sheetDateStr} (列${col})`);
+}
+
+function updateTenMinuteHeatmapRowByDate_(spreadsheet, normalizedDateStr, preferredRow) {
+  const tenMinuteSheet = spreadsheet.getSheetByName(CONFIG.TEN_MINUTE_SHEET_NAME);
+
+  if (!tenMinuteSheet) {
+    throw new Error(`10分集計シートが見つかりません: ${CONFIG.TEN_MINUTE_SHEET_NAME}`);
+  }
+
+  const sourceCol = findTenMinuteColumnByDate_(tenMinuteSheet, normalizedDateStr);
+
+  if (!sourceCol) {
+    throw new Error(`10分集計の対象列が見つかりません: ${normalizedDateStr}`);
+  }
+
+  const hourlyCounts = buildHourlyCountsFromTenMinuteColumn_(tenMinuteSheet, sourceCol);
+  const heatmapSheet = getOrCreateTenMinuteHeatmapSheet_(spreadsheet);
+  const targetRow = findOrCreateTenMinuteHeatmapRow_(heatmapSheet, normalizedDateStr, preferredRow);
+
+  writeTenMinuteHeatmapRow_(heatmapSheet, targetRow, hourlyCounts);
+}
+
+function getOrCreateTenMinuteHeatmapSheet_(spreadsheet) {
+  let sheet = spreadsheet.getSheetByName(TEN_MINUTE_HEATMAP_SHEET_NAME);
+
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(TEN_MINUTE_HEATMAP_SHEET_NAME);
+  }
+
+  setTenMinuteHeatmapHeaders_(sheet);
+
+  return sheet;
+}
+
+function setTenMinuteHeatmapHeaders_(sheet) {
+  const headers = ["ステータス", "日付"];
+
+  for (let h = 0; h <= 23; h++) {
+    headers.push(`${h}時`);
+  }
+
+  const headerRange = sheet.getRange(1, 1, 1, headers.length);
+
+  headerRange.setNumberFormat("@");
+  headerRange.setValues([headers]);
+  headerRange.setBackground("#FFFF00");
+  headerRange.setFontColor("#000000");
+  headerRange.setFontWeight("bold");
+  headerRange.setHorizontalAlignment("center");
+}
+
+function findTenMinuteColumnByDate_(tenMinuteSheet, normalizedDateStr) {
+  const lastColumn = Math.max(tenMinuteSheet.getLastColumn(), 2);
+
+  for (let col = 2; col <= lastColumn; col++) {
+    const dateLabel = tenMinuteSheet.getRange(TEN_MINUTE_DATE_ROW, col).getDisplayValue();
+
+    if (!dateLabel) {
+      continue;
+    }
+
+    const colDateStr = resolveSheetDateStr_(dateLabel);
+
+    if (colDateStr === normalizedDateStr) {
+      return col;
+    }
+  }
+
+  return null;
+}
+
+function buildHourlyCountsFromTenMinuteColumn_(tenMinuteSheet, col) {
+  const values = tenMinuteSheet
+    .getRange(TEN_MINUTE_DATA_START_ROW, col, TEN_MINUTE_DATA_ROWS, 1)
+    .getDisplayValues();
+
+  const hourlyCounts = new Array(24).fill(0);
+
+  for (let hour = 0; hour <= 23; hour++) {
+    let sum = 0;
+
+    for (let offset = 0; offset < 6; offset++) {
+      const rowIndex = hour * 6 + offset;
+      const n = Number(values[rowIndex][0]);
+
+      if (!isNaN(n)) {
+        sum += n;
+      }
+    }
+
+    hourlyCounts[hour] = sum;
+  }
+
+  return hourlyCounts;
+}
+
+function findOrCreateTenMinuteHeatmapRow_(heatmapSheet, normalizedDateStr, preferredRow) {
+  const displayLabel = buildTenMinuteDateLabel_(normalizedDateStr);
+
+  if (preferredRow && preferredRow >= 2) {
+    heatmapSheet.getRange(preferredRow, 2).setValue(displayLabel);
+    return preferredRow;
+  }
+
+  const lastRow = heatmapSheet.getLastRow();
+
+  if (lastRow >= 2) {
+    const labels = heatmapSheet.getRange(2, 2, lastRow - 1, 1).getDisplayValues();
+
+    for (let i = 0; i < labels.length; i++) {
+      const existingDateStr = resolveSheetDateStr_(labels[i][0]);
+
+      if (existingDateStr === normalizedDateStr) {
+        return i + 2;
+      }
+    }
+  }
+
+  const newRow = Math.max(lastRow + 1, 2);
+  heatmapSheet.getRange(newRow, 2).setValue(displayLabel);
+
+  return newRow;
+}
+
+function writeTenMinuteHeatmapRow_(heatmapSheet, row, hourlyCounts) {
+  const maxVal = hourlyCounts.reduce((m, v) => Math.max(m, Number(v) || 0), 0);
+  const colors = hourlyCounts.map(value => {
+    const n = Number(value) || 0;
+
+    if (n <= 0 || maxVal <= 0) {
+      return tenMinuteHeatmapColorForStep_(0);
+    }
+
+    let step = Math.ceil((n / maxVal) * 24);
+
+    if (step < 1) step = 1;
+    if (step > 24) step = 24;
+
+    return tenMinuteHeatmapColorForStep_(step);
+  });
+
+  const targetRange = heatmapSheet.getRange(row, 3, 1, 24);
+
+  // ヒートマップシートは背景色だけを表示する。
+  targetRange.clearContent();
+  targetRange.setBackgrounds([colors]);
+  targetRange.setHorizontalAlignment("center");
+  targetRange.setFontColor("#000000");
+  targetRange.setFontWeight("bold");
 }
 
 

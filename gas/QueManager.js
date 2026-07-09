@@ -786,10 +786,30 @@ function findQueRowById_(sheet, queId) {
 // ============================
 
 function markQueItemInProgress_(sheet, sheetRow) {
-  const now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+  const nowDate = new Date();
+  const now = Utilities.formatDate(nowDate, CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+  const createdAt = String(sheet.getRange(sheetRow, 7).getDisplayValue() || "").trim();
 
-  sheet.getRange(sheetRow, 6).setValue(QUE_CONFIG.STATUS.IN_PROGRESS); // F列(ステータス)
-  sheet.getRange(sheetRow, 8).setValue(now); // H列(処理開始日時)
+  let createdAtToWrite = createdAt;
+
+  if (!createdAtToWrite) {
+    createdAtToWrite = now;
+  } else {
+    const createdDate = new Date(createdAtToWrite);
+
+    // 作成日時が不正、または開始時刻より未来なら処理開始時刻へ寄せる。
+    if (isNaN(createdDate.getTime()) || createdDate.getTime() > nowDate.getTime()) {
+      createdAtToWrite = now;
+    }
+  }
+
+  // 「処理中」へ遷移する時は、終了日時を必ず空にして状態矛盾を防ぐ。
+  sheet.getRange(sheetRow, 6, 1, 4).setValues([[
+    QUE_CONFIG.STATUS.IN_PROGRESS,
+    createdAtToWrite,
+    now,
+    ""
+  ]]);
 }
 
 
@@ -804,6 +824,12 @@ function markQueItemDone_(sheet, sheetRow) {
   sheet.getRange(sheetRow, 9).setValue(now); // I列(処理終了日時)
 }
 
+
+// ============================
+// QUE行の整合性を補正する。
+// - 「処理中」なのに処理終了日時(I列)が入っている行は「完了」に直す
+// - 作成日時(G列) > 処理開始日時(H列) の逆転があれば、作成日時を開始日時へ補正
+// ============================
 
 // ============================
 // 15分トリガー: 「検索API叩け」を積むだけ
@@ -902,7 +928,7 @@ function queWorkerTrigger() {
     // (積んだ時点(enqueue_)ではまだID欄は空欄。未処理を拾って処理を
     //  始めるこの瞬間に、初めてIDが振られる)
     if (!nextItem.queId) {
-      const queId = generateQueId_();
+      const queId = generateUniqueQueId_(sheet);
       sheet.getRange(nextItem.sheetRow, 1).setValue(queId);
       nextItem.queId = queId;
     }
