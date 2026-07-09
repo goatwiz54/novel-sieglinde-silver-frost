@@ -90,7 +90,7 @@ function processUpdatePvSheetCommand_(targetDateStr) {
   console.log(`【PV取得シート更新】${targetDateStr} 追加:${rowsToAppend.length}件`);
 
   if (rowsToAppend.length > 0) {
-    enqueue_(QUE_CONFIG.COMMAND.FETCH_PV_SHEET, targetDateStr, QUE_CONFIG.PRIORITY.FETCH_PV_SHEET);
+    reserveTaskByKeyPrefix_(TASK_TRIGGER_PREFIX.FETCH_PV, targetDateStr);
   }
 }
 

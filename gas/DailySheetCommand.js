@@ -24,6 +24,15 @@
 // ============================
 
 function processCreateDailySheetCommand_(targetDateStr) {
+  const normalizedTargetDateStr = normalizeDateString_(targetDateStr);
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedTargetDateStr)) {
+    console.log(`【日付シート作成】対象日付が不正のためスキップ: ${targetDateStr}`);
+    return;
+  }
+
+  targetDateStr = normalizedTargetDateStr;
+
   const year = targetDateStr.substring(0, 4);
   const month = targetDateStr.substring(5, 7);
   const fileKey = `${year}年${month}月`;
@@ -97,10 +106,10 @@ function processCreateDailySheetCommand_(targetDateStr) {
 
   rewriteDailySheetSafely_(spreadsheet, sheetKey, mainSheet, buildResult.rowsToWrite);
 
-  // 後工程を積む(サマリ更新・10分集計・PV取得)
-  enqueue_(QUE_CONFIG.COMMAND.UPDATE_SUMMARY, targetDateStr, QUE_CONFIG.PRIORITY.UPDATE_SUMMARY);
-  enqueue_(QUE_CONFIG.COMMAND.TEN_MINUTE, targetDateStr, QUE_CONFIG.PRIORITY.TEN_MINUTE);
-  enqueue_(QUE_CONFIG.COMMAND.UPDATE_PV_SHEET, targetDateStr, QUE_CONFIG.PRIORITY.UPDATE_PV_SHEET);
+  // 後工程をTASKへ予約する(サマリ更新・10分集計・PV取得シート更新)
+  reserveTaskByKey_(TASK_TRIGGER_KEY.UPDATE_SUMMARY, targetDateStr);
+  reserveTaskByKey_(TASK_TRIGGER_KEY.UPDATE_TEN_MINUTE_PV, targetDateStr);
+  reserveTaskByKeyPrefix_(TASK_TRIGGER_PREFIX.UPDATE_PV, targetDateStr);
 }
 
 

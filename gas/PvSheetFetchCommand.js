@@ -70,7 +70,7 @@ const PV_SHEET_FETCH_BATCH_SIZE = 100;
 // ============================
 
 function enqueuePvFetchSheetTrigger() {
-  enqueue_(QUE_CONFIG.COMMAND.FETCH_PV_SHEET, null, QUE_CONFIG.PRIORITY.FETCH_PV_SHEET, "enqueuePvFetchSheetTrigger");
+  reserveTaskByKeyPrefix_(TASK_TRIGGER_PREFIX.FETCH_PV, "");
 }
 
 // ============================

@@ -169,6 +169,258 @@ function generateQueId_() {
   return `QUE-${id}`;
 }
 
+function collectExistingQueIds_(sheet) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return new Set();
+  }
+
+  const idValues = sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
+  const idSet = new Set();
+
+  idValues.forEach(row => {
+    const id = String(row[0] || "").trim();
+
+    if (id) {
+      idSet.add(id);
+    }
+  });
+
+  return idSet;
+}
+
+function generateUniqueQueId_(sheet) {
+  const existingIds = collectExistingQueIds_(sheet);
+  let queId = generateQueId_();
+  let retryCount = 0;
+
+  while (existingIds.has(queId)) {
+    retryCount++;
+
+    // 事実上衝突しない想定だが、念のため再生成を上限付きで続ける。
+    if (retryCount > 1000) {
+      throw new Error("【QUE】ID衝突が解消できませんでした");
+    }
+
+    queId = generateQueId_();
+  }
+
+  return queId;
+}
+
+function getTaskRangesByGroupKeyFromQue(groupKey) {
+  return getTaskRangesByGroupKey(groupKey);
+}
+
+function getTaskItemByKeyFromQue(key) {
+  return getTaskItemByKey(key);
+}
+
+function getTaskItemByGroupKeyAndTargetFromQue(groupKey, target) {
+  return getTaskItemByGroupKeyAndTarget(groupKey, target);
+}
+
+function getReservedTaskItemsReadyForQueueingFromQue() {
+  return getReservedTaskItemsReadyForQueueing();
+}
+
+function markTaskQueuedOn(taskKey, targetDateStr) {
+  return setTaskQueuedOnByKeyAndTarget(taskKey, targetDateStr || "");
+}
+
+function markTaskQueuedOff(taskKey) {
+  return setTaskQueuedOffByKey(taskKey);
+}
+
+function clearTimedOutQueuedTasksFromQue(thresholdMinutes) {
+  return clearTimedOutQueuedTasks_(thresholdMinutes);
+}
+
+function clearExpiredTaskGuardsFromQue() {
+  return clearExpiredTaskGuards_();
+}
+
+function clearExpiredWaitTasksFromQue() {
+  return clearExpiredWaitTasks_();
+}
+
+function setTaskWaitForQue(taskKey) {
+  return setTaskWaitByKey_(taskKey);
+}
+
+function dedupeReservedTasksByGroupAndTargetFromQue() {
+  return dedupeReservedTasksByGroupAndTarget_();
+}
+
+function ensureTaskSheetReadyFromQue_() {
+  // TaskManager側でヘッダー同期まで実施される。
+  getOrCreateTaskSheet_();
+}
+
+function getTaskToQueRoutes_() {
+  return [
+    {
+      matchType: "exact",
+      taskKey: TASK_TRIGGER_KEY.FETCH_SEARCH_API,
+      commandType: QUE_CONFIG.COMMAND.FETCH_API,
+      priority: QUE_CONFIG.PRIORITY.FETCH_API
+    },
+    {
+      matchType: "exact",
+      taskKey: TASK_TRIGGER_KEY.FETCH_API_BLOCK,
+      commandType: QUE_CONFIG.COMMAND.FETCH_API_BLOCK,
+      priority: QUE_CONFIG.PRIORITY.FETCH_API,
+      initialStatus: QUE_CONFIG.STATUS.WAITING
+    },
+    {
+      matchType: "prefix",
+      taskKey: TASK_TRIGGER_PREFIX.UPDATE_DAY,
+      commandType: QUE_CONFIG.COMMAND.CREATE_DAILY_SHEET,
+      priority: QUE_CONFIG.PRIORITY.CREATE_DAILY_SHEET_BASE
+    },
+    {
+      matchType: "exact",
+      taskKey: TASK_TRIGGER_KEY.UPDATE_SUMMARY,
+      commandType: QUE_CONFIG.COMMAND.UPDATE_SUMMARY,
+      priority: QUE_CONFIG.PRIORITY.UPDATE_SUMMARY
+    },
+    {
+      matchType: "exact",
+      taskKey: TASK_TRIGGER_KEY.UPDATE_TEN_MINUTE_PV,
+      commandType: QUE_CONFIG.COMMAND.TEN_MINUTE,
+      priority: QUE_CONFIG.PRIORITY.TEN_MINUTE
+    },
+    {
+      matchType: "prefix",
+      taskKey: TASK_TRIGGER_PREFIX.UPDATE_PV,
+      commandType: QUE_CONFIG.COMMAND.UPDATE_PV_SHEET,
+      priority: QUE_CONFIG.PRIORITY.UPDATE_PV_SHEET
+    },
+    {
+      matchType: "prefix",
+      taskKey: TASK_TRIGGER_PREFIX.FETCH_PV,
+      commandType: QUE_CONFIG.COMMAND.FETCH_PV_SHEET,
+      priority: QUE_CONFIG.PRIORITY.FETCH_PV_SHEET
+    },
+    {
+      matchType: "exact",
+      taskKey: TASK_TRIGGER_KEY.CLEAR_QUE,
+      commandType: QUE_CONFIG.COMMAND.CLEANUP,
+      priority: QUE_CONFIG.PRIORITY.CLEANUP
+    }
+  ];
+}
+
+function matchTaskRoute_(taskKey, route) {
+  if (route.matchType === "exact") {
+    return taskKey === route.taskKey;
+  }
+
+  if (route.matchType === "prefix") {
+    return taskKey.indexOf(route.taskKey) === 0;
+  }
+
+  return false;
+}
+
+function compareTaskTimeAsc_(a, b) {
+  const aTime = String(a.taskTime || "").trim();
+  const bTime = String(b.taskTime || "").trim();
+
+  // yyyy-MM-dd HH:mm:ss 形式なので文字列比較で時系列順になる。
+  if (aTime && bTime && aTime !== bTime) {
+    return aTime.localeCompare(bTime);
+  }
+
+  if (aTime && !bTime) return -1;
+  if (!aTime && bTime) return 1;
+
+  return Number(a.id || 0) - Number(b.id || 0);
+}
+
+function sortTaskItemsForAppend_(taskItems) {
+  const items = taskItems.slice();
+
+  // グループやキー種別に関係なく、TASK_TIMEの古いものからQUEへ積む。
+  items.sort(compareTaskTimeAsc_);
+
+  return items;
+}
+
+function resolveQueCommandFromTask_(taskItem) {
+  if (!taskItem || !taskItem.key) {
+    return null;
+  }
+
+  const taskKey = String(taskItem.key).trim();
+
+  const routes = getTaskToQueRoutes_();
+
+  for (let i = 0; i < routes.length; i++) {
+    const route = routes[i];
+
+    if (matchTaskRoute_(taskKey, route)) {
+      return {
+        commandType: route.commandType,
+        priority: route.priority,
+        initialStatus: route.initialStatus
+      };
+    }
+  }
+
+  return null;
+}
+
+function appendQueTrigger() {
+  ensureTaskSheetReadyFromQue_();
+
+  const taskItems = sortTaskItemsForAppend_(getReservedTaskItemsReadyForQueueingFromQue());
+
+  if (taskItems.length === 0) {
+    console.log("【TASK→QUE】reserve/off のタスクはありません");
+    return;
+  }
+
+  let appendedCount = 0;
+
+  taskItems.forEach(taskItem => {
+    const resolved = resolveQueCommandFromTask_(taskItem);
+
+    if (!resolved) {
+      console.log(`【TASK→QUE】対応するQUE命令が無いためスキップ: ${taskItem.key}`);
+      return;
+    }
+
+    const targetDateStr = taskItem.target || null;
+    const didEnqueue = enqueue_(resolved.commandType, targetDateStr, resolved.priority, "appendQueTrigger", false, resolved.initialStatus);
+
+    if (!didEnqueue) {
+      return;
+    }
+
+    if (markTaskQueuedOn(taskItem.key, targetDateStr)) {
+      appendedCount++;
+    }
+  });
+
+  console.log(`【TASK→QUE】積み込み完了: ${appendedCount}件`);
+}
+
+function clearQueTrigger() {
+  enqueueQueCleanupTrigger();
+}
+
+// 互換性維持: 既存トリガー設定が旧関数名を参照していても動作させる
+function trigger_append_que() {
+  appendQueTrigger();
+}
+
+// 互換性維持: 既存トリガー設定が旧関数名を参照していても動作させる
+function trigger_clear_que() {
+  clearQueTrigger();
+}
+
 
 // ============================
 // QUEに命令を1件積む。
@@ -178,6 +430,7 @@ function generateQueId_() {
 // ============================
 
 const QUE_MAX_ROWS = 100;
+const QUE_MANUAL_PAUSE_MARKER = "###";
 
 
 // ============================
@@ -218,35 +471,41 @@ function enqueue_(commandType, targetDateStr, priority, source, allowDuplicate, 
 
   if (!lock.tryLock(30000)) {
     console.log(`【QUE】ロック取得失敗のため積み込みスキップ: ${commandType} / ${targetDateStr || ""}`);
-    return;
+    return false;
   }
 
   try {
     const sheet = getOrCreateQueSheet_();
-    const normalizedDateStr = targetDateStr || "";
+
+    if (isQueManualPauseActive_(sheet)) {
+      console.log(`【QUE】手動停止マーカー(${QUE_MANUAL_PAUSE_MARKER})検知のため積み込みスキップ: ${commandType} / ${targetDateStr || ""}`);
+      return false;
+    }
+
+    const normalizedDateStr = targetDateStr ? normalizeDateString_(targetDateStr) : "";
     const sourceLabel = source || "(不明)";
     const status = initialStatus || QUE_CONFIG.STATUS.PENDING;
 
     if (commandType !== QUE_CONFIG.COMMAND.CLEANUP && isQueCleanupActive_(sheet)) {
       console.log(`【QUE】QUE整理が進行中のためスキップ: ${commandType} / ${normalizedDateStr}`);
-      return;
+      return false;
     }
 
     if (!allowDuplicate && isDuplicateInQue_(sheet, commandType, normalizedDateStr)) {
       console.log(`【QUE】重複のためスキップ: ${commandType} / ${normalizedDateStr}`);
-      return;
+      return false;
     }
 
     compactQueRows_(sheet);
 
     if (!hasRoom_(sheet)) {
       console.log(`【QUE】上限(${QUE_MAX_ROWS}行)に達しているため追加をスキップ: ${commandType} / ${normalizedDateStr}`);
-      return;
+      return false;
     }
 
     const now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
     const appendRow = getQueAppendRow_(sheet);
-    const queId = generateQueId_();
+    const queId = generateUniqueQueId_(sheet);
 
     const appendRange = sheet.getRange(appendRow, 1, 1, 10);
     appendRange.setNumberFormat("@");
@@ -264,6 +523,7 @@ function enqueue_(commandType, targetDateStr, priority, source, allowDuplicate, 
     ]]);
 
     console.log(`【QUE】積みました: ${commandType} / ${normalizedDateStr} / ID:${queId} / 優先度${priority} / 積み元:${sourceLabel} / ステータス:${status}`);
+    return true;
   } finally {
     lock.releaseLock();
   }
@@ -337,6 +597,16 @@ function hasRoom_(sheet) {
   const dataRowCount = getQueDataRows_(sheet).length;
 
   return dataRowCount < QUE_MAX_ROWS;
+}
+
+function isQueManualPauseActive_(sheet) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) return false;
+
+  const ids = sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
+
+  return ids.some(row => String(row[0] || "").indexOf(QUE_MANUAL_PAUSE_MARKER) !== -1);
 }
 
 
@@ -550,7 +820,7 @@ function enqueueFetchApiTrigger() {
     return;
   }
 
-  enqueue_(QUE_CONFIG.COMMAND.FETCH_API, null, QUE_CONFIG.PRIORITY.FETCH_API, "enqueueFetchApiTrigger");
+  reserveTaskByKey_(TASK_TRIGGER_KEY.FETCH_SEARCH_API, "");
 }
 
 
@@ -590,7 +860,7 @@ function queWorkerTrigger() {
 
     if (!existingSheet) {
       getOrCreateQueSheet_();
-      enqueue_(QUE_CONFIG.COMMAND.FETCH_API, null, QUE_CONFIG.PRIORITY.FETCH_API, "queWorkerTrigger(自己修復)");
+      reserveTaskByKey_(TASK_TRIGGER_KEY.FETCH_SEARCH_API, "");
     }
   }
 
@@ -611,6 +881,11 @@ function queWorkerTrigger() {
 
     if (!sheet) {
       console.log("【QUE】QUEシートがまだ準備できていません(次回に期待)");
+      return;
+    }
+
+    if (isQueManualPauseActive_(sheet)) {
+      console.log(`【QUE】手動停止マーカー(${QUE_MANUAL_PAUSE_MARKER})検知のため処理開始をスキップ`);
       return;
     }
 
@@ -706,61 +981,64 @@ const QUE_CLEANUP_THRESHOLD_MINUTES = 10;
 function processQueCleanupCommand_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(QUE_CONFIG.SHEET_NAME);
-
-  if (!sheet) {
-    console.log("【QUE整理】QUEシートが見つかりません");
-    return;
-  }
-
-  const lastRow = sheet.getLastRow();
-
-  if (lastRow < 2) {
-    console.log("【QUE整理】データ行がありません");
-    return;
-  }
-
-  const values = sheet.getRange(2, 1, lastRow - 1, 10).getValues(); // ID,命令種別,対象日付,優先度,積み元,ステータス,作成日時,処理開始日時,処理終了日時,監視メッセージ
-
-  const now = new Date();
   let deletedCount = 0;
 
-  for (let idx = values.length - 1; idx >= 0; idx--) {
-    const row = values[idx];
-    const commandType = row[1];
-    const status = row[5];
+  if (!sheet) {
+    console.log("【QUE整理】QUEシートが見つからないためQUE削除はスキップします");
+  } else {
+    const lastRow = sheet.getLastRow();
 
-    // 「QUE整理」自身の行(今まさに処理中の自分)は絶対に消さない
-    // ただし、過去に完了した「QUE整理」は10分経過後に削除してよい。
-    if (commandType === QUE_CONFIG.COMMAND.CLEANUP && status === QUE_CONFIG.STATUS.IN_PROGRESS) continue;
+    if (lastRow < 2) {
+      console.log("【QUE整理】QUEデータ行がないためQUE削除はスキップします");
+    } else {
+      const values = sheet.getRange(2, 1, lastRow - 1, 10).getValues(); // ID,命令種別,対象日付,優先度,積み元,ステータス,作成日時,処理開始日時,処理終了日時,監視メッセージ
+      const now = new Date();
 
-    let shouldDelete = false;
+      for (let idx = values.length - 1; idx >= 0; idx--) {
+        const row = values[idx];
+        const commandType = row[1];
+        const status = row[5];
 
-    if (status === QUE_CONFIG.STATUS.IN_PROGRESS) {
-      const startedAt = row[7];
-      shouldDelete = isOlderThanMinutes_(startedAt, now, QUE_CLEANUP_THRESHOLD_MINUTES);
+        // 「QUE整理」自身の行(今まさに処理中の自分)は絶対に消さない
+        // ただし、過去に完了した「QUE整理」は10分経過後に削除してよい。
+        if (commandType === QUE_CONFIG.COMMAND.CLEANUP && status === QUE_CONFIG.STATUS.IN_PROGRESS) continue;
 
-    } else if (status === QUE_CONFIG.STATUS.WAITING) {
-      const createdAt = row[6];
-      shouldDelete = isOlderThanMinutes_(createdAt, now, QUE_CLEANUP_THRESHOLD_MINUTES);
+        let shouldDelete = false;
 
-    } else if (status === QUE_CONFIG.STATUS.DONE || status.indexOf("エラー") === 0) {
-      const finishedAt = row[8];
+        if (status === QUE_CONFIG.STATUS.IN_PROGRESS) {
+          const startedAt = row[7];
+          shouldDelete = isOlderThanMinutes_(startedAt, now, QUE_CLEANUP_THRESHOLD_MINUTES);
 
-      if (!finishedAt) {
-        shouldDelete = true; // 処理終了日時が空 → 削除対象
-      } else {
-        shouldDelete = isOlderThanMinutes_(finishedAt, now, QUE_CLEANUP_THRESHOLD_MINUTES);
+        } else if (status === QUE_CONFIG.STATUS.WAITING) {
+          const createdAt = row[6];
+          shouldDelete = isOlderThanMinutes_(createdAt, now, QUE_CLEANUP_THRESHOLD_MINUTES);
+
+        } else if (status === QUE_CONFIG.STATUS.DONE || status.indexOf("エラー") === 0) {
+          const finishedAt = row[8];
+
+          if (!finishedAt) {
+            shouldDelete = true; // 処理終了日時が空 → 削除対象
+          } else {
+            shouldDelete = isOlderThanMinutes_(finishedAt, now, QUE_CLEANUP_THRESHOLD_MINUTES);
+          }
+        }
+
+        if (!shouldDelete) continue;
+
+        const sheetRow = idx + 2;
+        sheet.deleteRow(sheetRow);
+        deletedCount++;
       }
     }
-
-    if (!shouldDelete) continue;
-
-    const sheetRow = idx + 2;
-    sheet.deleteRow(sheetRow);
-    deletedCount++;
   }
 
-  console.log(`【QUE整理】完了: ${deletedCount}件削除しました`);
+  const clearedGuards = clearExpiredTaskGuardsFromQue();
+  const clearedWaitTasks = clearExpiredWaitTasksFromQue();
+  const resetTimedOutTasks = clearTimedOutQueuedTasksFromQue(QUE_CLEANUP_THRESHOLD_MINUTES);
+  const dedupedTasks = dedupeReservedTasksByGroupAndTargetFromQue();
+  const setCleanupWait = setTaskWaitForQue(TASK_TRIGGER_KEY.CLEAR_QUE);
+
+  console.log(`【QUE整理】完了: QUE削除${deletedCount}件 / TASK_GUARD解除${clearedGuards}件 / TASK_WAIT解除${clearedWaitTasks}件 / TASKタイムアウト解除${resetTimedOutTasks}件 / TASK重複整理${dedupedTasks}件 / QUE整理WAIT設定=${setCleanupWait}`);
 }
 
 
@@ -790,7 +1068,7 @@ function isOlderThanMinutes_(dateValue, now, thresholdMinutes) {
 // ============================
 
 function enqueueQueCleanupTrigger() {
-  enqueue_(QUE_CONFIG.COMMAND.CLEANUP, null, QUE_CONFIG.PRIORITY.CLEANUP, "enqueueQueCleanupTrigger");
+  reserveTaskByKey_(TASK_TRIGGER_KEY.CLEAR_QUE, "");
 }
 
 

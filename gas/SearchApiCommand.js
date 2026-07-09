@@ -102,26 +102,22 @@ function processFetchApiCommand_() {
   // 対象日付ごとに「日付シート作成」を積む
   const uniqueDates = Array.from(new Set(rows.map(row => row[0])));
 
+  let reservedCount = 0;
+
   uniqueDates.forEach(dateStr => {
-    enqueue_(
-      QUE_CONFIG.COMMAND.CREATE_DAILY_SHEET,
-      dateStr,
-      QUE_CONFIG.PRIORITY.CREATE_DAILY_SHEET_BASE,
-      "processFetchApiCommand_"
-    );
+    if (reserveTaskByKeyPrefix_(TASK_TRIGGER_PREFIX.UPDATE_DAY, dateStr)) {
+      reservedCount++;
+    }
   });
 
-  console.log(`【検索API】完了: ${rows.length}件 / 対象日付${uniqueDates.length}件`);
+  console.log(`【検索API】完了: ${rows.length}件 / 対象日付${uniqueDates.length}件 / TASK予約${reservedCount}件`);
 
-  // 検索ブロックを「待機」で積む(作成から10分経過するまで、次の検索API叩けを禁止する)
-  enqueue_(
-    QUE_CONFIG.COMMAND.FETCH_API_BLOCK,
-    null,
-    QUE_CONFIG.PRIORITY.FETCH_API,
-    "processFetchApiCommand_",
-    false,
-    QUE_CONFIG.STATUS.WAITING
-  );
+  // 検索APIタスクをwait状態へ遷移させる。待機時間はTASK_WAIT(min)列を参照する。
+  const setWait = setTaskWaitByKey_(TASK_TRIGGER_KEY.FETCH_SEARCH_API);
+
+  if (!setWait) {
+    console.log("【検索API】TASK wait設定に失敗しました(検索間隔制御が効かない可能性があります)");
+  }
 }
 
 

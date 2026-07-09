@@ -10,8 +10,8 @@
  * ・各関数はtry/catchで囲み、失敗時は err.stack (スタックトレース)を
  *   丸ごとログに出す。実行数タブでログを見れば、どの行で・何が
  *   原因で失敗したかがそのまま分かる。
- * ・本番のトリガー(enqueueFetchApiTrigger / queWorkerTrigger)は
- *   一切変更しない。あくまで別経路から同じ処理を直接呼ぶだけ。
+ * ・TestではTASK/QUEへの書き込みや参照を行わない。
+ * ・実処理関数(processXxxCommand_)を直接呼んで挙動確認する。
  **********************************************************************/
 
 
@@ -21,13 +21,7 @@
 // ============================
 
 function testQueWorkerOnce() {
-  try {
-    console.log("【Test】queWorkerTrigger を手動実行します");
-    queWorkerTrigger();
-    console.log("【Test】queWorkerTrigger 完了(例外なし)");
-  } catch (err) {
-    console.log(`【Testエラー】${err.stack || err}`);
-  }
+  console.log("【Test】無効: TestではQUEを見ません。必要ならGAS画面から queWorkerTrigger を直接実行してください。");
 }
 
 
@@ -36,20 +30,21 @@ function testQueWorkerOnce() {
 // ============================
 
 function testEnqueueFetchApiOnce() {
-  try {
-    console.log("【Test】enqueueFetchApiTrigger を手動実行します");
-    enqueueFetchApiTrigger();
-    console.log("【Test】enqueueFetchApiTrigger 完了(例外なし)");
-  } catch (err) {
-    console.log(`【Testエラー】${err.stack || err}`);
-  }
+  console.log("【Test】無効: TestではTASK/QUEへ積み込みません。");
 }
 
 
 // ============================
-// 「日付シート作成」の実処理を、QUEを介さず直接呼ぶ。
-// ロックの取得も、ステータス更新も行わない。
-// 純粋に processCreateDailySheetCommand_ 単体の動作・エラーを見るためのもの。
+// TASK予約をQUEへ反映する appendQueTrigger を手動で1回動かす
+// ============================
+
+function testAppendQueOnce() {
+  console.log("【Test】無効: TestではTASK/QUEへ積み込みません。");
+}
+
+
+// ============================
+// 「日付シート作成」の実処理を直接呼ぶ。
 //
 // ★対象日付は下の TEST_TARGET_DATE_STR を書き換えてから実行する。
 // ============================
@@ -68,7 +63,7 @@ function testCreateDailySheetForDate() {
 
 
 // ============================
-// 検索API叩けの実処理を、QUEを介さず直接呼ぶ
+// 検索API叩けの実処理を直接呼ぶ
 // ============================
 
 function testFetchApiCommand() {
@@ -83,7 +78,7 @@ function testFetchApiCommand() {
 
 
 // ============================
-// サマリ更新の実処理を、QUEを介さず直接呼ぶ
+// サマリ更新の実処理を直接呼ぶ
 // ============================
 
 function testUpdateSummaryForDate() {
@@ -98,7 +93,7 @@ function testUpdateSummaryForDate() {
 
 
 // ============================
-// 10分集計の実処理を、QUEを介さず直接呼ぶ
+// 10分集計の実処理を直接呼ぶ
 // ============================
 
 function testTenMinuteForDate() {
@@ -113,7 +108,7 @@ function testTenMinuteForDate() {
 
 
 // ============================
-// 「PV取得シート更新」の実処理を、QUEを介さず直接呼ぶ
+// 「PV取得シート更新」の実処理を直接呼ぶ
 // ============================
 
 function testUpdatePvSheetForDate() {
@@ -128,8 +123,7 @@ function testUpdatePvSheetForDate() {
 
 
 // ============================
-// 「PV取得実行」の実処理を、QUEを介さず直接呼ぶ
-// (日付を問わずシート全体が対象なので、引数は不要)
+// 「PV取得実行」の実処理を直接呼ぶ
 // ============================
 
 function testFetchPvSheet() {
@@ -148,26 +142,7 @@ function testFetchPvSheet() {
 // ============================
 
 function testDumpQueSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(QUE_CONFIG.SHEET_NAME);
-
-  if (!sheet) {
-    console.log("【Test】QUEシートが存在しません");
-    return;
-  }
-
-  const lastRow = sheet.getLastRow();
-
-  if (lastRow < 2) {
-    console.log("【Test】QUEシートにデータ行がありません");
-    return;
-  }
-
-  const values = sheet.getRange(2, 1, lastRow - 1, 10).getDisplayValues();
-
-  values.forEach((row, idx) => {
-    console.log(`行${idx + 2}: ID=${row[0]} [${row[1]}] 日付=${row[2]} 優先度=${row[3]} 積み元=${row[4]} ステータス=${row[5]} 作成=${row[6]} 開始=${row[7]} 終了=${row[8]} 監視=${row[9]}`);
-  });
+  console.log("【Test】無効: TestではQUEを参照しません。");
 }
 
 
@@ -178,44 +153,10 @@ function testDumpQueSheet() {
 // (0のままなら「処理中/エラー」の行を全部戻す)。
 // ============================
 
-const TEST_RESET_ROW = 0; // ★特定の行番号(シート上の行番号)だけ戻したい場合はここに指定。0なら全件対象
+const TEST_RESET_ROW = 0; // 未使用(互換維持)
 
 function testResetStuckQueRows() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(QUE_CONFIG.SHEET_NAME);
-
-  if (!sheet) {
-    console.log("【Test】QUEシートが存在しません");
-    return;
-  }
-
-  const lastRow = sheet.getLastRow();
-
-  if (lastRow < 2) {
-    console.log("【Test】QUEシートにデータ行がありません");
-    return;
-  }
-
-  const statusRange = sheet.getRange(2, 4, lastRow - 1, 1); // D列(ステータス)
-  const statuses = statusRange.getDisplayValues();
-
-  let resetCount = 0;
-
-  statuses.forEach((row, idx) => {
-    const sheetRow = idx + 2;
-
-    if (TEST_RESET_ROW !== 0 && sheetRow !== TEST_RESET_ROW) return;
-
-    const status = row[0];
-    const isStuck = (status === QUE_CONFIG.STATUS.IN_PROGRESS || status.indexOf("エラー") === 0);
-
-    if (!isStuck) return;
-
-    sheet.getRange(sheetRow, 4).setValue(QUE_CONFIG.STATUS.PENDING);
-    resetCount++;
-  });
-
-  console.log(`【Test】${resetCount}件を「未処理」に戻しました`);
+  console.log("【Test】無効: TestではQUEを更新しません。");
 }
 
 
@@ -266,12 +207,11 @@ function testDumpPvSheet() {
 
 
 // ============================
-// QUEシートの「30行上限」動作を、本物の命令で確認するテスト。
+// TASK予約→appendQueTrigger経由で「PV取得シート更新」をQUEへ積むテスト。
 //
-// ダミー命令ではなく、実際に本番と同じ「PV取得シート更新」を
-// TEST_TARGET_DATE_STR に対してQUE経由(未処理→ワーカーが拾う)で
-// 積んで実行する。これにより、findMonthlySpreadsheetIfExists_ が
-// 実際に該当月のスプレッドシートを読みに行く、本番と同じ経路を確認できる。
+// 実際に本番と同じ、TASK予約→trigger_append_que→QUE積み込みの
+// 経路で「PV取得シート更新」を積む。これにより、予約層の動作も
+// 含めて確認できる。
 //
 // ★注意: QUEシートはこのプロジェクトがバインドされている
 // スプレッドシート(テンプレート)側にある。ダミーデータで
@@ -279,61 +219,18 @@ function testDumpPvSheet() {
 // ============================
 
 function testEnqueuePvSheetUpdateForTestDate() {
-  console.log(`【Test】「PV取得シート更新」を未処理でQUEへ積みます: ${TEST_TARGET_DATE_STR}`);
-
-  enqueue_(
-    QUE_CONFIG.COMMAND.UPDATE_PV_SHEET,
-    TEST_TARGET_DATE_STR,
-    QUE_CONFIG.PRIORITY.UPDATE_PV_SHEET,
-    "手動テスト(Test.gs)"
-  );
-
-  console.log("【Test】積み込み完了。この後 testQueWorkerOnce を実行すると、");
-  console.log("　　　　優先度が最も若ければこの命令が選ばれて処理されます。");
-  console.log("　　　　(他にもっと優先度の高い未処理があれば、そちらが先に処理されます)");
+  console.log("【Test】無効: TestではTASK/QUEを扱いません。testUpdatePvSheetForDate を使用してください。");
 }
 
 
 // ============================
-// 「PV取得」シートのデータ行を全部消して、ヘッダーだけの状態に戻す。
-// 過去のバージョン違いのデータが混在してしまった時の、やり直し用。
+// 破壊的な直接操作は禁止。QUE経路以外の処理は行わない。
 // ============================
 
 function testClearPvSheet() {
-  const year = TEST_TARGET_DATE_STR.substring(0, 4);
-  const month = TEST_TARGET_DATE_STR.substring(5, 7);
-  const fileKey = `${year}年${month}月`;
-
-  const ss = findMonthlySpreadsheetIfExists_(fileKey);
-
-  if (!ss) {
-    console.log(`【Test】月別ファイルが見つかりません: ${fileKey}`);
-    return;
-  }
-
-  const sheet = ss.getSheetByName(PV_SHEET_NAME);
-
-  if (!sheet) {
-    console.log("【Test】「PV取得」シートが存在しません(何もしません)");
-    return;
-  }
-
-  const lastRow = sheet.getLastRow();
-
-  if (lastRow < 2) {
-    console.log("【Test】「PV取得」シートは既にデータ行がありません");
-    return;
-  }
-
-  sheet.deleteRows(2, lastRow - 1);
-  console.log(`【Test】「PV取得」シートのデータ行(${lastRow - 1}行)を削除しました`);
+  console.log("【Test】無効: 破壊的な直接操作は許可していません。QUE経路のテストのみ使用してください。");
 }
 
 function getQueDataRowCount_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(QUE_CONFIG.SHEET_NAME);
-
-  if (!sheet) return 0;
-
-  return Math.max(sheet.getLastRow() - 1, 0);
+  return 0;
 }

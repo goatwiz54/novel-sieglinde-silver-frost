@@ -72,11 +72,15 @@ function installedOnEdit(e) {
   if (range.getRow() !== 1) return;
 
   const value = range.getValue();
+  const checkboxMode = isCheckboxCell_(range);
 
-  if (value !== TEN_MINUTE_TRIGGER_LABEL) return;
+  if (!checkboxMode && value !== TEN_MINUTE_TRIGGER_LABEL) return;
+  if (checkboxMode && value !== true) return;
 
   // 検知した瞬間に「処理中」であることが分かるよう即座に上書きする
-  range.setValue(TEN_MINUTE_PROCESSING_MARK);
+  if (!checkboxMode) {
+    range.setValue(TEN_MINUTE_PROCESSING_MARK);
+  }
   SpreadsheetApp.flush();
 
   try {
@@ -84,8 +88,22 @@ function installedOnEdit(e) {
   } catch (err) {
     // 想定外の例外もセルに直接書き込む(ログだけだと気づきにくいため)
     console.log(`【10分集計】想定外のエラー: ${err.stack || err}`);
-    sheet.getRange(1, range.getColumn()).setValue(`💀:${err.toString()}`);
+    if (checkboxMode) {
+      sheet.getRange(1, range.getColumn()).setValue(false);
+    } else {
+      sheet.getRange(1, range.getColumn()).setValue(`💀:${err.toString()}`);
+    }
   }
+}
+
+function isCheckboxCell_(range) {
+  const rule = range.getDataValidation();
+
+  if (!rule) {
+    return false;
+  }
+
+  return rule.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.CHECKBOX;
 }
 
 
@@ -158,6 +176,8 @@ function debugEnsureTriggerForMonth() {
 
 function updateTenMinuteColumn_(sheet, col) {
   const ss = sheet.getParent();
+  const statusCell = sheet.getRange(1, col);
+  const checkboxMode = isCheckboxCell_(statusCell);
 
   const dateCellValue = sheet.getRange(TEN_MINUTE_DATE_ROW, col).getDisplayValue();
   const sheetDateStr = resolveSheetDateStr_(dateCellValue);
@@ -165,7 +185,11 @@ function updateTenMinuteColumn_(sheet, col) {
   if (!sheetDateStr) {
     const errMsg = `日付解釈失敗:値="${dateCellValue}"`;
     console.log(`【10分集計】${errMsg}`);
-    sheet.getRange(1, col).setValue(`${TEN_MINUTE_FAIL_MARK}:${errMsg}`);
+    if (checkboxMode) {
+      statusCell.setValue(false);
+    } else {
+      statusCell.setValue(`${TEN_MINUTE_FAIL_MARK}:${errMsg}`);
+    }
     return;
   }
 
@@ -179,7 +203,11 @@ function updateTenMinuteColumn_(sheet, col) {
   if (!monthlySpreadsheet) {
     const errMsg = `月別ファイルなし:${fileKey}`;
     console.log(`【10分集計】${errMsg}`);
-    sheet.getRange(1, col).setValue(`${TEN_MINUTE_FAIL_MARK}:${errMsg}`);
+    if (checkboxMode) {
+      statusCell.setValue(false);
+    } else {
+      statusCell.setValue(`${TEN_MINUTE_FAIL_MARK}:${errMsg}`);
+    }
     return;
   }
 
@@ -188,15 +216,24 @@ function updateTenMinuteColumn_(sheet, col) {
   if (!sourceSheet) {
     const errMsg = `日別シートなし:${sheetDateStr}`;
     console.log(`【10分集計】${errMsg}`);
-    sheet.getRange(1, col).setValue(`${TEN_MINUTE_FAIL_MARK}:${errMsg}`);
+    if (checkboxMode) {
+      statusCell.setValue(false);
+    } else {
+      statusCell.setValue(`${TEN_MINUTE_FAIL_MARK}:${errMsg}`);
+    }
     return;
   }
 
   const countByBucket = buildTenMinuteBucketCounts_(sourceSheet);
 
   writeTenMinuteColumnValues_(sheet, col, countByBucket);
+  applyTenMinuteHeatmapForColumn_(sheet, col);
 
-  sheet.getRange(1, col).setValue(TEN_MINUTE_SUCCESS_MARK);
+  if (checkboxMode) {
+    statusCell.setValue(false);
+  } else {
+    statusCell.setValue(TEN_MINUTE_SUCCESS_MARK);
+  }
 
   ss.toast(`10分集計を更新しました: ${sheetDateStr} (列${col})`);
 }
@@ -283,4 +320,103 @@ function writeTenMinuteColumnValues_(sheet, col, countByBucket) {
   sheet.getRange(TEN_MINUTE_DATA_START_ROW, col, TEN_MINUTE_DATA_ROWS, 1)
     .setNumberFormat("@")
     .setValues(values);
+}
+
+// ============================
+// 10分集計の1日分(1列=144セル)に対してヒートマップを適用する。
+// 0件は白、1件以上はその列内の最大値を基準に24段階で着色する。
+// ============================
+
+function applyTenMinuteHeatmapForColumn_(sheet, col) {
+  const range = sheet.getRange(TEN_MINUTE_DATA_START_ROW, col, TEN_MINUTE_DATA_ROWS, 1);
+  const values = range.getDisplayValues();
+
+  let maxVal = 0;
+
+  values.forEach(row => {
+    const n = Number(row[0]);
+
+    if (!isNaN(n) && n > maxVal) {
+      maxVal = n;
+    }
+  });
+
+  const backgrounds = values.map(row => {
+    const n = Number(row[0]);
+
+    if (isNaN(n) || n <= 0 || maxVal <= 0) {
+      return [tenMinuteHeatmapColorForStep_(0)];
+    }
+
+    let step = Math.ceil((n / maxVal) * 24);
+
+    if (step < 1) step = 1;
+    if (step > 24) step = 24;
+
+    return [tenMinuteHeatmapColorForStep_(step)];
+  });
+
+  range.setBackgrounds(backgrounds);
+  range.setFontColor("#000000");
+  range.setFontWeight("bold");
+  range.setHorizontalAlignment("center");
+}
+
+function tenMinuteHeatmapColorForStep_(step) {
+  if (CONFIG.HEATMAP_STYLE === "rainbow") {
+    return tenMinuteRainbowColorForStep_(step);
+  }
+
+  return TEN_MINUTE_HEATMAP_COLORS_BLUE[step];
+}
+
+const TEN_MINUTE_HEATMAP_COLORS_BLUE = [
+  "#FFFFFF", "#EBF5FF", "#DCEEFF", "#CDE6FF", "#BEDCFF", "#AAD2FF",
+  "#96C6FA", "#82B9F5", "#6EAAF0", "#5FA0EB", "#5096E6", "#4691E1",
+  "#3C8CDC", "#3787D7", "#3282D2", "#2D7DCD", "#2878C8", "#2373C3",
+  "#1E6EBE", "#1969B9", "#1464B4", "#0F5FAF", "#0A5AAA", "#0555A5", "#0050A0"
+];
+
+function tenMinuteRainbowColorForStep_(step) {
+  if (step <= 0) return "#FFFFFF";
+
+  const t = (step - 1) / 23;
+  const hue = 240 - t * 240;
+
+  return tenMinuteHslToHex_(hue, 85, 55);
+}
+
+function tenMinuteHslToHex_(h, s, l) {
+  const sNorm = s / 100;
+  const lNorm = l / 100;
+
+  const c = (1 - Math.abs(2 * lNorm - 1)) * sNorm;
+  const hPrime = h / 60;
+  const x = c * (1 - Math.abs((hPrime % 2) - 1));
+  const m = lNorm - c / 2;
+
+  let r1 = 0;
+  let g1 = 0;
+  let b1 = 0;
+
+  if (hPrime >= 0 && hPrime < 1) {
+    r1 = c; g1 = x; b1 = 0;
+  } else if (hPrime >= 1 && hPrime < 2) {
+    r1 = x; g1 = c; b1 = 0;
+  } else if (hPrime >= 2 && hPrime < 3) {
+    r1 = 0; g1 = c; b1 = x;
+  } else if (hPrime >= 3 && hPrime < 4) {
+    r1 = 0; g1 = x; b1 = c;
+  } else if (hPrime >= 4 && hPrime < 5) {
+    r1 = x; g1 = 0; b1 = c;
+  } else {
+    r1 = c; g1 = 0; b1 = x;
+  }
+
+  const toHex = (v) => {
+    const n = Math.round((v + m) * 255);
+    return n.toString(16).padStart(2, "0").toUpperCase();
+  };
+
+  return `#${toHex(r1)}${toHex(g1)}${toHex(b1)}`;
 }

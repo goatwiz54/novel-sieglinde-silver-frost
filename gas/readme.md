@@ -23,22 +23,32 @@ GAS（Google Apps Script）は1回の実行が最大6分で強制終了される
 | C | KEY | トリガー/タスクの一意キー（例: trigger_fetch_pv） |
 | D | GROUP_KEY | グルーピング用キー（例: day, pv, search, que, summary） |
 | E | TARGET | 処理対象の詳細（日付・対象シート名など、一意に特定できる情報を書く） |
-| F | PROCESS | none / reserve。予約されているかどうか |
-| G | TIME | 予約時刻（PROCESS=reserveの時のみ意味を持つ） |
-| H | QUE | on / off。このタスクが現在QUEに積まれているかどうかのフラグ |
-| I | TIME | QUEがonになった時刻（クリーナーのタイムアウト判定に使用） |
+| F | GUARD | block または日時。block中はQUEへ積まない。日時はblock解除時刻 |
+| G | TASK | none / reserve / wait |
+| H | TASK_TIME | TASKの状態を更新した時刻 |
+| I | TASK_WAIT(min) | TASK=wait にする際の待機分数（スプシで調整する） |
+| J | TASK_WAIT_TIME | TASK=wait の解除時刻 |
+| K | QUE | on / off。このタスクが現在QUEに積まれているかどうかのフラグ |
+| L | QUE_TIME | QUEがonになった時刻（クリーナーのタイムアウト判定に使用） |
 
 ### 2.1 行の性質
 
 行は固定。動的な追加・削除はしない。複数予約が必要なタスク（日付シート更新、PV取得シート更新、PV書き込みなど）は、あらかじめ複数行（例: day1/day2/day3、update_pv1/2/3、fetch_pv1/2/3）を用意しておき、空いている行に書き込む方式。
 
+検索APIは、実行完了後に同じ検索APIタスク行を TASK=wait にして、
+TASK_WAIT(min) に基づいて TASK_WAIT_TIME を自動設定し、再投入を止める。
+
 ### 2.2 予約の書き込みルール
 
 各処理がTASKに予約を書き込む際：
 
-1. 対象行のQUE(H列)を確認する
-2. offなら: TARGET・PROCESS=reserve・TIMEを書き込む
+1. 対象行のQUE(K列)を確認する
+2. offなら: TARGET・TASK=reserve・TASK_TIMEを書き込む
 3. onなら: 書き込み不可（すでに処理中/積まれ済みのためスキップ、または別の空き行を探す）
+
+GUARD(F列)がblock、または未来日時の場合、その行はreserveでもQUEへ積まない。
+
+TASK=wait の行は、TASK_WAIT_TIME(J列)の時刻を過ぎるまでQUEへ積まない。
 
 同一GROUP_KEY内で同一TARGETが重複して予約されることはNG。書き込み側では基本的に避ける想定だが、万一発生した場合はクリーナーが整理する。
 
@@ -60,13 +70,14 @@ TASKは処理開始後は一切参照・更新されないため、QUEには実�
 
 ### 4.1 各タスクの元処理（予約する側）
 
-TASK.QUE(H)がoffの行にのみ、TARGET・PROCESS=reserve・TIMEを書き込む。
+TASK.QUE(K)がoffの行にのみ、TARGET・TASK=reserve・TASK_TIMEを書き込む。
 
-### 4.2 trigger_append_que（QUE追加）
+### 4.2 appendQueTrigger（QUE追加）
 
-- TASKでPROCESS=reserveの行を見つけたら、QUEに新規行を追加する（TARGET等をコピー、STATUS=未処理）
-- 同時にTASK側のQUE(H)をon、TIME(I)を積んだ時刻に更新する
+- TASKでTASK=reserveの行を見つけたら、QUEに新規行を追加する（TARGET等をコピー、STATUS=未処理）
+- 同時にTASK側のQUE(K)をon、QUE_TIME(L)を積んだ時刻に更新する
 - 追加専用。QUE・TASKどちらの行も削除・リセットしない
+- グループやKEY種別に関係なく、TASK_TIMEの昇順（古い時刻が先）でQUEへ積む
 
 ### 4.3 QUE実行トリガー（未処理を探して実行するもの）
 
@@ -76,17 +87,28 @@ TASK.QUE(H)がoffの行にのみ、TARGET・PROCESS=reserve・TIMEを書き込�
 - TASK表は一切触らない
 - この仕組みにより、QUE全体で同時に1件しか処理中にならず、ロック無しで排他制御ができる
 
-### 4.4 trigger_clear_que（クリーナー）
+※運用停止スイッチ:
+QUEのID列(A列)のどこかに `###` を含む値がある場合、
+enqueue（新規積み込み）とworkerの処理開始（未処理→処理中化）の両方を停止する。
+手動で流したい時は `###` を消す。
+
+### 4.4 clearQueTrigger（クリーナー）
 
 QUEとTASKの両方を整備できる唯一の処理。
 
 - QUE: 処理開始時刻から10分以上経過した行を削除する（GASの最大実行時間6分を超えたバッファとして10分を採用）
-- TASK: QUE(H)=onのままTIME(I)が10分以上経過している行を、TARGET・PROCESS・TIME・QUE・TIME全てリセット（未使用状態に戻し、再予約可能にする）
+- TASK: QUE(K)=onのままQUE_TIME(L)が10分以上経過している行を、TARGET・GUARD・TASK・TASK_TIME・TASK_WAIT_TIME・QUE・QUE_TIMEをリセット（未使用状態に戻し、再予約可能にする）
 - GROUP_KEY＋TARGETが重複しているTASK行があれば、IDが小さい方を残し、大きい方をリセットする
+- TASK: GUARD(F列)が日時の場合、解除時刻を過ぎたらGUARDをクリアする
+- TASK: TASK=wait かつ TASK_WAIT_TIME(J列)の時刻を過ぎたらリセットして再予約可能にする
+
+QUE整理タスク自身は、処理完了時に TASK=wait へ遷移し、
+同じ行の TASK_WAIT(min) に基づいて TASK_WAIT_TIME を設定する。
+これにより、QUE整理の間隔をスプシ側で調整できる。
 
 ## 5. 状態遷移まとめ
 
-**TASK**: (none/off) → 予約書き込み → (reserve/off) → trigger_append_queが検知 → (reserve/on) → クリーナーが10分超で検知 → (none/off) に戻る
+**TASK**: (none/off) → 予約書き込み → (reserve/off) → appendQueTriggerが検知 → (reserve/on) → クリーナーが10分超で検知 → (none/off) に戻る
 
 **QUE**: 追加(未処理) → 実行トリガーが拾う(処理中) → 完了 or エラー → クリーナーが10分超で削除
 

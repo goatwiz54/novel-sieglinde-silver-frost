@@ -1,5 +1,5 @@
 /**********************************************************************
- * Common.gs (旧: コード.gs)
+ * Common.gs (旧: コード.gs)　test
  *
  * 全命令から共有される、本当に汎用的な処理だけを置く。
  * ・設定値(CONFIG)
@@ -17,7 +17,7 @@
  *       日付シート作成   → DailySheetCommand.gs
  *       サマリ更新       → SummaryCommand.gs
  *       10分集計         → TenMinuteQueCommand.gs / TenMinuteUpdater.gs
- *       PV取得           → PvFetchQueCommand.gs / PvGetter.gs
+ *       PV取得           → PvSheetFetchCommand.gs / PvGetter.gs
  * ・旧・15分ごとの一括処理(fetchAndRecordNarouData)はQUE方式に置き換わり
  *   廃止済み(「解析」シート・AnalysisLog.gsも同様に廃止)。
  *
