@@ -41,6 +41,8 @@
  *   「検索結果」シート末尾の更新日時から取得すべき範囲(lastup)を組み立て、
  *   取得データが現在時刻の直近(SEARCH_API_CUTOFF_MINUTES分以内)に届いたら
  *   打ち切る方式に変更した。詳細は fetchSearchApiPages_() を参照。
+ * ・fetchSearchApiPages_() は options でバックフィル(過去の欠損期間取得)にも
+ *   対応している(fixedEndDate指定時)。詳細は同関数のコメントを参照。
  **********************************************************************/
 
 
@@ -326,8 +328,10 @@ function stripQueryParam_(url, paramName) {
     .replace(/[?&]$/, "");
 }
 
-function buildSearchApiUrl_(start, lastupStartEpoch, lastupEndEpoch) {
-  let baseUrl = stripQueryParam_(CONFIG.API_URL, "st");
+// baseUrlOverride: 省略時は CONFIG.API_URL を使う。バックフィル等で
+// 別のベースURLを明示的に使いたい場合に渡す。
+function buildSearchApiUrl_(start, lastupStartEpoch, lastupEndEpoch, baseUrlOverride) {
+  let baseUrl = stripQueryParam_(baseUrlOverride || CONFIG.API_URL, "st");
   baseUrl = stripQueryParam_(baseUrl, "lastup");
 
   const separator = baseUrl.indexOf("?") === -1 ? "?" : "&";
@@ -376,9 +380,10 @@ function buildUpdatedAtRange_(novels) {
 }
 
 // start: st(表示開始位置) / lastupStartEpoch,lastupEndEpoch: lastup範囲(UNIX秒)
-function fetchSearchApiPageByStart_(start, lastupStartEpoch, lastupEndEpoch) {
+// baseUrlOverride: 省略時は CONFIG.API_URL
+function fetchSearchApiPageByStart_(start, lastupStartEpoch, lastupEndEpoch, baseUrlOverride) {
   const fetchedAt = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-  const url = buildSearchApiUrl_(start, lastupStartEpoch, lastupEndEpoch);
+  const url = buildSearchApiUrl_(start, lastupStartEpoch, lastupEndEpoch, baseUrlOverride);
 
   try {
     const response = UrlFetchApp.fetch(url);
@@ -416,18 +421,39 @@ function fetchSearchApiPageByStart_(start, lastupStartEpoch, lastupEndEpoch) {
   }
 }
 
-// tailDate: 「検索結果」シート末尾の更新日+時刻(Dateオブジェクト)。
-//           シートがまだ空(初回実行など)の場合は null を渡す
-//           (その場合は SEARCH_API_INITIAL_LOOKBACK_MINUTES 分前を起点にする)。
-function fetchSearchApiPages_(tailDate) {
-  const lim = Number(CONFIG.SEARCH_API_LIM || 500);
-  const maxContinuousFetch = Number(CONFIG.SEARCH_API_MAX_CONTINUOUS_FETCH || 4);
+// tailDate: 取得開始位置(lastup開始)にするDateオブジェクト。
+//           通常運用では「検索結果」シート末尾の更新日+時刻を渡す。
+//           null の場合は SEARCH_API_INITIAL_LOOKBACK_MINUTES 分前を起点にする。
+//
+// options (省略可):
+//   baseUrl             … CONFIG.API_URL の代わりに使うベースURL
+//   fixedEndDate        … lastup終了を「現在時刻」ではなくこのDateに固定する。
+//                          ★過去の欠損期間をバックフィル取得する時に指定する。
+//                          指定した場合、現在時刻ベースの打ち切り判定(CUTOFF)は
+//                          行わない(過去データには「直近に追いついたか」という
+//                          概念が無いため)。取得件数がlim未満になったら
+//                          (=その先にデータが無い)打ち切る。
+//   maxContinuousFetch  … 1回の呼び出しで連続取得してよい最大ページ数。
+//                          省略時はCONFIG.SEARCH_API_MAX_CONTINUOUS_FETCH。
+//                          手動バックフィルは実行時間に余裕があるので、
+//                          大きめの値を指定してよい。
+//   lim                 … 1ページの取得件数。省略時はCONFIG.SEARCH_API_LIM。
+//   intervalMs          … ページ間のスリープ時間(ms)。省略時はCONFIG設定値。
+function fetchSearchApiPages_(tailDate, options) {
+  options = options || {};
+
+  const lim = Number(options.lim || CONFIG.SEARCH_API_LIM || 500);
+  const maxContinuousFetch = Number(options.maxContinuousFetch || CONFIG.SEARCH_API_MAX_CONTINUOUS_FETCH || 4);
   const cutoffMinutes = Number(CONFIG.SEARCH_API_CUTOFF_MINUTES || 10);
-  const intervalMs = Number(CONFIG.SEARCH_API_PAGE_INTERVAL_MS || 0);
+  const intervalMs = Number(options.intervalMs != null ? options.intervalMs : (CONFIG.SEARCH_API_PAGE_INTERVAL_MS || 0));
   const lookbackMinutes = Number(CONFIG.SEARCH_API_INITIAL_LOOKBACK_MINUTES || 60);
+  const baseUrl = options.baseUrl || null;
 
   const startDate = tailDate || new Date(Date.now() - lookbackMinutes * 60 * 1000);
   const lastupStartEpoch = Math.floor(startDate.getTime() / 1000);
+
+  const isBackfillMode = options.fixedEndDate instanceof Date && !isNaN(options.fixedEndDate.getTime());
+  const fixedEndEpoch = isBackfillMode ? Math.floor(options.fixedEndDate.getTime() / 1000) : null;
 
   const pageResults = [];
   let stopReason = "";
@@ -435,11 +461,12 @@ function fetchSearchApiPages_(tailDate) {
   for (let i = 0; i < maxContinuousFetch; i++) {
     const st = 1 + i * lim;
 
-    // 「終了」は毎回そのときの現在時刻まで(取得範囲を常に最新へ追従させる)
-    const nowEpoch = Math.floor(Date.now() / 1000);
+    // 通常運用: 「終了」は毎回そのときの現在時刻まで(取得範囲を常に最新へ追従させる)。
+    // バックフィルモード: 呼び出し元が指定した固定の終了時刻を使う。
+    const endEpoch = isBackfillMode ? fixedEndEpoch : Math.floor(Date.now() / 1000);
 
-    console.log(`Fetching search API page (st=${st}, lastup=${lastupStartEpoch}-${nowEpoch})...`);
-    const pageResult = fetchSearchApiPageByStart_(st, lastupStartEpoch, nowEpoch);
+    console.log(`Fetching search API page (st=${st}, lastup=${lastupStartEpoch}-${endEpoch}${isBackfillMode ? " [backfill]" : ""})...`);
+    const pageResult = fetchSearchApiPageByStart_(st, lastupStartEpoch, endEpoch, baseUrl);
     pageResults.push(pageResult);
 
     if (pageResult.status === "ERROR") {
@@ -447,18 +474,20 @@ function fetchSearchApiPages_(tailDate) {
       break;
     }
 
-    // 現在時刻からcutoffMinutes分以内の更新データが1件でもあれば、
-    // 直近まで追いついたとみなして打ち切る
-    const cutoffThresholdMs = Date.now() - cutoffMinutes * 60 * 1000;
+    if (!isBackfillMode) {
+      // 現在時刻からcutoffMinutes分以内の更新データが1件でもあれば、
+      // 直近まで追いついたとみなして打ち切る(バックフィルモードでは行わない)
+      const cutoffThresholdMs = Date.now() - cutoffMinutes * 60 * 1000;
 
-    const hasRecentData = pageResult.novels.some(novel => {
-      const d = parseNarouUpdatedAt_(novel.general_lastup);
-      return d && d.getTime() >= cutoffThresholdMs;
-    });
+      const hasRecentData = pageResult.novels.some(novel => {
+        const d = parseNarouUpdatedAt_(novel.general_lastup);
+        return d && d.getTime() >= cutoffThresholdMs;
+      });
 
-    if (hasRecentData) {
-      stopReason = "CUTOFF";
-      break;
+      if (hasRecentData) {
+        stopReason = "CUTOFF";
+        break;
+      }
     }
 
     if (pageResult.count < lim) {

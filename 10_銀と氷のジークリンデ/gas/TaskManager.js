@@ -41,6 +41,7 @@ const TASK_CONFIG = {
   HEADERS: ["ID", "名称", "KEY", "GROUP_KEY", "TARGET", "GUARD", "TASK", "TASK_TIME", "TASK_WAIT(min)", "TASK_WAIT_TIME", "QUE", "QUE_TIME"],
   HIGHLIGHT: {
     ACTIVE_COLOR: "#CCFFCC",
+    WAIT_COLOR: "#CCFFFF",
     CLEAR_COLOR: "#FFFFFF"
   },
   STATUS: {
@@ -208,6 +209,27 @@ function isQueCellHighlightActive_(queValue) {
   return queLower === TASK_CONFIG.QUE_FLAG.PUSHED;
 }
 
+// ============================
+// TASK列(G列)の背景色を、状態に応じて3色に振り分ける。
+//   reserve / reserve_to_wait → 緑(ACTIVE_COLOR)
+//   wait                      → 薄い水色(WAIT_COLOR)
+//   none / それ以外           → 白(CLEAR_COLOR)
+// ============================
+
+function resolveTaskCellColor_(taskValue) {
+  const taskLower = normalizeTaskStatus_(taskValue);
+
+  if (taskLower === TASK_CONFIG.STATUS.RESERVE || taskLower === "reserve_to_wait") {
+    return TASK_CONFIG.HIGHLIGHT.ACTIVE_COLOR;
+  }
+
+  if (taskLower === TASK_CONFIG.STATUS.WAIT) {
+    return TASK_CONFIG.HIGHLIGHT.WAIT_COLOR;
+  }
+
+  return TASK_CONFIG.HIGHLIGHT.CLEAR_COLOR;
+}
+
 function updateTaskRowHighlight_(sheet, sheetRow) {
   if (!sheet || !sheetRow || sheetRow < 2) {
     return;
@@ -216,7 +238,7 @@ function updateTaskRowHighlight_(sheet, sheetRow) {
   const rowValues = sheet.getRange(sheetRow, 1, 1, TASK_CONFIG.HEADERS.length).getDisplayValues()[0];
   const taskValue = rowValues[TASK_CONFIG.COLUMN.TASK - 1];
   const queValue = rowValues[TASK_CONFIG.COLUMN.QUE - 1];
-  const taskColor = isTaskCellHighlightActive_(taskValue) ? TASK_CONFIG.HIGHLIGHT.ACTIVE_COLOR : TASK_CONFIG.HIGHLIGHT.CLEAR_COLOR;
+  const taskColor = resolveTaskCellColor_(taskValue);
   const queColor = isQueCellHighlightActive_(queValue) ? TASK_CONFIG.HIGHLIGHT.ACTIVE_COLOR : TASK_CONFIG.HIGHLIGHT.CLEAR_COLOR;
 
   sheet.getRange(sheetRow, TASK_CONFIG.COLUMN.TASK).setBackground(taskColor);
@@ -241,7 +263,7 @@ function syncTaskRowHighlights_(sheet) {
   values.forEach((row, idx) => {
     const taskValue = row[TASK_CONFIG.COLUMN.TASK - 1];
     const queValue = row[TASK_CONFIG.COLUMN.QUE - 1];
-    const taskColor = isTaskCellHighlightActive_(taskValue) ? TASK_CONFIG.HIGHLIGHT.ACTIVE_COLOR : TASK_CONFIG.HIGHLIGHT.CLEAR_COLOR;
+    const taskColor = resolveTaskCellColor_(taskValue);
     const queColor = isQueCellHighlightActive_(queValue) ? TASK_CONFIG.HIGHLIGHT.ACTIVE_COLOR : TASK_CONFIG.HIGHLIGHT.CLEAR_COLOR;
 
     taskColors.push([taskColor]);
@@ -975,6 +997,52 @@ function repairStuckTaskByKey_(key, thresholdMinutes) {
 // ============================
 
 const TASK_CLEANUP_THRESHOLD_MINUTES = 10;
+
+// ============================
+// 複数のTASK行を、まとめて「pushed」にする(RangeListで一括書き込み)。
+//
+// ・対象行がシート上でバラバラの位置にあっても、RangeListを使えば
+//   API呼び出し3回(QUE値・QUE_TIME値・ハイライト)だけで済む。
+// ・1行ずつ updateTaskById_ 経由で処理すると、1行につき最低5回の
+//   Sheets API呼び出しになる(QUE値・QUE_TIME値・ハイライト用の行読み込み・
+//   背景色2箇所)。件数が増えるほど差が大きくなるため、appendQueTrigger の
+//   ような「複数行をまとめてpushed化したい」場面ではこちらを使う。
+//
+// taskIds: TASKのID配列(getReservedTaskItemsReadyForQueueing等で
+//          取得済みのitem.idをそのまま渡せる)。
+// 戻り値: 実際に更新できた件数。
+// ============================
+
+function markTasksPushedBulk_(taskIds) {
+  if (!taskIds || taskIds.length === 0) {
+    return 0;
+  }
+
+  const sheet = getOrCreateTaskSheet_();
+
+  const sheetRows = taskIds
+    .map(id => findTaskRowById_(sheet, id))
+    .filter(row => row !== null);
+
+  if (sheetRows.length === 0) {
+    return 0;
+  }
+
+  const now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+
+  const queA1Refs = sheetRows.map(row => sheet.getRange(row, TASK_CONFIG.COLUMN.QUE).getA1Notation());
+  const queTimeA1Refs = sheetRows.map(row => sheet.getRange(row, TASK_CONFIG.COLUMN.QUE_TIME).getA1Notation());
+
+  // ①QUE列を全行まとめて "pushed" に
+  sheet.getRangeList(queA1Refs).setValue(TASK_CONFIG.QUE_FLAG.PUSHED);
+  // ②QUE_TIME列を全行まとめて現在時刻に
+  sheet.getRangeList(queTimeA1Refs).setValue(now);
+  // ③QUE列のハイライトを全行まとめて緑に
+  sheet.getRangeList(queA1Refs).setBackground(TASK_CONFIG.HIGHLIGHT.ACTIVE_COLOR);
+
+  return sheetRows.length;
+}
+
 
 function taskCleanupTrigger() {
   const lock = LockService.getScriptLock();

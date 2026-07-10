@@ -245,3 +245,35 @@ function testQueCleanup() {
 function getQueDataRowCount_() {
   return 0;
 }
+
+
+// ============================
+// 【手動実行用】検索結果シートの欠損期間をバックフィルする。
+//
+// ★実行前に、下の TEST_BACKFILL_START / TEST_BACKFILL_END を
+//   埋めたい欠損期間に合わせて書き換えてから実行すること。
+//   例: 「検索結果」シートで 2026-07-09 16:57 の次が 2026-07-09 20:14
+//   になっていた場合、その間を埋めたいので
+//     START = 直前の記録済み時刻の1分後(16:58)
+//     END   = 次の記録済み時刻(20:14。この時刻の投稿もこの範囲に含めて
+//             取得されるので、重複してもmergeRowsIntoSearchResultSheet_が
+//             上書き処理してくれるため問題ない)
+// ============================
+
+const TEST_BACKFILL_START = "2026/07/09 16:58:00"; // ★ここを欠損期間の開始に変更
+const TEST_BACKFILL_END = "2026/07/09 20:14:00";   // ★ここを欠損期間の終了に変更
+
+function testBackfillSearchResultGap() {
+  try {
+    const startDate = new Date(TEST_BACKFILL_START);
+    const endDate = new Date(TEST_BACKFILL_END);
+
+    console.log(`【Test】検索結果バックフィルを直接実行します: ${TEST_BACKFILL_START} 〜 ${TEST_BACKFILL_END}`);
+
+    const result = backfillSearchResultForRange_(startDate, endDate);
+
+    console.log(`【Test】検索結果バックフィル 完了(例外なし): ${JSON.stringify(result)}`);
+  } catch (err) {
+    console.log(`【Testエラー】${err.stack || err}`);
+  }
+}

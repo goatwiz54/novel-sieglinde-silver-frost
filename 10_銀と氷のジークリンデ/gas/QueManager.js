@@ -18,8 +18,8 @@
  *   J: 監視メッセージ
  *
  * ■命令種別と優先度
- *   QUE整理            (優先度に関わらず、シート上のどこにあっても
- *                       最優先で選ばれる。pickNextQueItem_参照)
+ *   QUE整理            優先度0(特別扱いはしない。他の命令と同じく
+ *                       シートの並び順で処理される。pickNextQueItem_参照)
  *   検索API叩け        優先度10
  *   検索ブロック        優先度10相当(「待機」ステータスで積まれ、
  *                       通常のpickNextQueItem_からは無視される)
@@ -34,11 +34,15 @@
  * ■QUE整理(QUEシート専用の掃除+自分自身の自己修復)
  * ・enqueueQueCleanupTrigger という専用の10分トリガーが積む
  *   (既に未処理/処理中で存在するなら重複スキップ)。
- * ・pickNextQueItem_は、シート上のどこにあっても「QUE整理」を
- *   最優先で選ぶ。「QUE整理」が処理中の間は、他の一切の命令は
- *   選ばれない(queWorkerTriggerは何もせず終了する)。
+ * ・pickNextQueItem_は「QUE整理」を特別扱いしない。他の命令と全く同じく、
+ *   シートの並び順(上から)で自分の番が来たら処理される。
+ * ・「処理中」が同時に1件までという制約は、pickNextQueItem_側の関門
+ *   (処理中10分未満の行が1件でもあれば新規着手しない)で保証される。
+ *   これはQUE整理に限らず全命令に共通の制約。
  * ・「QUE整理」が未処理/処理中の間は、enqueue_自体もブロックされ、
  *   他の命令は一切積めない(検索ブロック・QUE整理自身を除く)。
+ *   これは積み込み側(enqueue_)の制御であり、処理順(pickNextQueItem_)
+ *   とは別の話。
  * ・行の削除は、この「QUE整理」だけが行う(他に削除する仕組みは無い)。
  *   実際に削除する対象:
  *     - 「処理中」のまま処理開始日時(H列)から10分以上経過した行
@@ -506,7 +510,7 @@ const QUE_MANUAL_PAUSE_MARKER = "###";
 // QUEに命令を1件積む。
 // 同じ「命令種別+対象日付」が既に未処理/処理中で存在すればスキップする。
 //
-// ■QUE整理によるブロック
+// ■QUE整理によるブロック(積み込み側の制御。処理順とは別)
 // 「QUE整理」自身以外の命令は、QUEに「QUE整理」が未処理/処理中で
 // 存在する間、一切積めない(スキップされる)。
 //
@@ -750,9 +754,18 @@ function renumberDateSheetCreationPriorities_(sheet) {
 
 
 // ============================
-// 未処理の中から、シート上の並び順で最初(一番上)のものを1件選ぶ。
-// 優先度による選び方は一旦やめ、QUEシートの並び順通りに処理する。
-// 見つからなければ null。
+// 未処理の中から、次に処理する1件を選ぶ。
+//
+// ■優先順位のルール(QUE整理を特別扱いしない、通常のQUE処理)
+// 1. シート全体で「処理中」かつ処理開始日時(H列)から
+//    QUE_CLEANUP_THRESHOLD_MINUTES(10分)未満の行が1件でもあれば、
+//    新規着手はしない(nullを返す=今回は何も選ばず未処理のまま待つ)。
+//    ★システム全体で同時に「処理中」は1件までに制限するための関門。
+//    QUE整理もここでは特別扱いしない(自分が処理中なら他も含めて
+//    誰も新規着手しない、というだけで十分に安全)。
+// 2. 関門を通過したら、シートの並び順(上から)で最初の「未処理」を選ぶ。
+//    「待機」ステータスの行は無視して読み飛ばす(検索ブロックなど)。
+//    QUE整理も含め、命令種別による優先順位は一切付けない。
 //
 // ★getDisplayValues()を使い、対象日付は normalizeDateString_ で
 // 正規化してから返す。ここでDateオブジェクトのまま返してしまうと、
@@ -760,50 +773,27 @@ function renumberDateSheetCreationPriorities_(sheet) {
 // ステータスが「処理中」のまま止まる原因になるため。
 // ============================
 
-// ============================
-// 未処理の中から、次に処理する1件を選ぶ。
-//
-// ■優先順位のルール
-// 1. 「QUE整理」がシート上のどこであれ「処理中」なら → null を返す
-//    (QUE整理が終わるまで、他の一切の命令を選ばない)
-// 2. 「QUE整理」がシート上のどこであれ「未処理」なら → 位置に関わらず
-//    最優先でそれを選ぶ
-// 3. どちらも無ければ、通常通りシートの並び順(上から)で「未処理」を
-//    探す。ただし「待機」ステータスの行は無視して読み飛ばす
-//    (検索ブロックなど。通常の処理対象にはならない)
-// ============================
-
 function pickNextQueItem_(sheet) {
   const lastRow = sheet.getLastRow();
 
   if (lastRow < 2) return null;
 
-  const values = sheet.getRange(2, 1, lastRow - 1, 6).getDisplayValues(); // ID,命令種別,対象日付,優先度,積み元,ステータス
+  const values = sheet.getRange(2, 1, lastRow - 1, 8).getDisplayValues(); // ID,命令種別,対象日付,優先度,積み元,ステータス,作成日時,処理開始日時
+  const now = new Date();
 
-  // 1. QUE整理が処理中なら、他の一切を選ばない
-  const cleanupInProgress = values.some(row => (
-    row[1] === QUE_CONFIG.COMMAND.CLEANUP && row[5] === QUE_CONFIG.STATUS.IN_PROGRESS
-  ));
+  // 1. 「処理中」かつ10分未満の行が1件でもあれば、新規着手しない
+  const hasFreshInProgress = values.some(row => {
+    if (row[5] !== QUE_CONFIG.STATUS.IN_PROGRESS) return false;
 
-  if (cleanupInProgress) return null;
+    const startedAt = row[7];
+    const elapsedMinutes = (now.getTime() - new Date(startedAt).getTime()) / (1000 * 60);
 
-  // 2. QUE整理が未処理なら、位置に関わらず最優先で選ぶ
-  for (let idx = 0; idx < values.length; idx++) {
-    const row = values[idx];
+    return elapsedMinutes < QUE_CLEANUP_THRESHOLD_MINUTES;
+  });
 
-    if (row[1] === QUE_CONFIG.COMMAND.CLEANUP && row[5] === QUE_CONFIG.STATUS.PENDING) {
-      return {
-        sheetRow: idx + 2,
-        queId: row[0] || null,
-        commandType: row[1],
-        targetDateStr: row[2] ? normalizeDateString_(row[2]) : "",
-        priority: Number(row[3]),
-        source: String(row[4] || "").trim()
-      };
-    }
-  }
+  if (hasFreshInProgress) return null;
 
-  // 3. 通常通り、シートの並び順で「未処理」を探す。「待機」は読み飛ばす
+  // 2. シートの並び順で最初の「未処理」を選ぶ。「待機」は読み飛ばす
   for (let idx = 0; idx < values.length; idx++) {
     const row = values[idx];
     const status = row[5];
@@ -1009,11 +999,11 @@ function queWorkerTrigger() {
     }
 
     // ★優先度による並べ替えは行わない。QUEシートの並び順(上から)で処理する。
-    // (ただし「QUE整理」だけは位置に関わらず最優先。pickNextQueItem_参照)
+    // QUE整理も特別扱いしない(pickNextQueItem_参照)。
     nextItem = pickNextQueItem_(sheet);
 
     if (!nextItem) {
-      console.log("【QUE】未処理の命令はありません(またはQUE整理が処理中のため待機)");
+      console.log("【QUE】未処理の命令はありません(または処理中10分未満の命令があるため待機)");
       return;
     }
 
@@ -1108,54 +1098,16 @@ function queWorkerTrigger() {
 
 const QUE_CLEANUP_THRESHOLD_MINUTES = 10;
 
-/**
- * 「処理中」で10分未満のQUEが存在するかチェック。
- * QUE整理を実施すべきか判定に使う。
- *
- * @returns {boolean} 「処理中」で10分未満のQUEが存在する場合 true
- */
-function hasActiveInProgressQueItems_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(QUE_CONFIG.SHEET_NAME);
-
-  if (!sheet) {
-    return false;
-  }
-
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) {
-    return false;
-  }
-
-  const values = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
-  const now = new Date();
-
-  for (let idx = 0; idx < values.length; idx++) {
-    const row = values[idx];
-    const status = row[5]; // F列: ステータス
-
-    if (status !== QUE_CONFIG.STATUS.IN_PROGRESS) {
-      continue;
-    }
-
-    const startedAt = row[7]; // H列: 処理開始日時
-    const elapsedMinutes = (now.getTime() - new Date(startedAt).getTime()) / (1000 * 60);
-
-    if (elapsedMinutes < QUE_CLEANUP_THRESHOLD_MINUTES) {
-      return true; // 10分未満のアクティブ「処理中」が存在
-    }
-  }
-
-  return false; // 「処理中」は存在しない、またはすべて10分以上経過
-}
+// ============================
+// 「処理中」が同時に1件までという制約は、pickNextQueItem_側の関門
+// (処理中10分未満の行があれば新規着手しない)で既に保証されている。
+// そのため、以前ここにあった「processQueCleanupCommand_自身の
+// 二重チェック(hasActiveInProgressQueItems_)」は不要になったため削除した。
+// QUE整理が実処理を始める時点で、シート上に「処理中」があるとすれば
+// それはQUE整理自身の行(今まさに実行中)だけである。
+// ============================
 
 function processQueCleanupCommand_() {
-  // ★「処理中」で10分未満のQUEが存在する場合はスキップ
-  if (hasActiveInProgressQueItems_()) {
-    console.log("【QUE整理】処理中のQUEが存在するためQUE整理をスキップします");
-    return;
-  }
-
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(QUE_CONFIG.SHEET_NAME);
   let deletedCount = 0;
