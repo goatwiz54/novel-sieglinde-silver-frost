@@ -22,7 +22,19 @@
  *   - TASKシートを直接読み書きするコードを分散させない
  *   - TASK列の検索・参照をkey/groupKey/targetで行う
  *   - IDへの参照はこのファイル内だけで扱う
- **********************************************************************/ 
+ *
+ * ■TASK整理(taskCleanupTrigger, 1分ごと・QUEを一切介さない独立トリガー)
+ * ・GUARD失効解除・wait失効解除・pushed放置タイムアウト解除・reserve重複整理を、
+ *   QUEシート/QUE命令に一切依存せず、TASKシートの読み書きだけで完結させる。
+ * ・以前はこれら全部を「QUE整理」(QUEコマンド。10分に1回、QUE経由でしか
+ *   起動できない)が担っていたが、QUE整理自身のTASK行がwait/pushedのまま
+ *   詰まると「詰まりを解消できるのはQUE整理自身の実行結果だけ」という
+ *   循環依存でシステム全体がデッドロックする欠陥があった。
+ *   TASK整理をQUEと無関係な独立トリガーに切り出すことで、QUE整理の
+ *   生死に関係なく他のtaskの詰まりは解消され続けるようにしている。
+ * ・QUE整理自身の詰まりは、repairStuckTaskByKey_による自己修復
+ *   (enqueueQueCleanupTrigger内で予約前に呼ばれる)で別途解消する。
+ **********************************************************************/
 
 const TASK_CONFIG = {
   SHEET_NAME: "TASK",
@@ -864,4 +876,122 @@ function dedupeReservedTasksByGroupAndTarget_() {
   });
 
   return resetCount;
+}
+
+
+// ============================
+// 指定キーのTASK行が「詰まっている」状態かを判定し、詰まっていれば
+// 強制的に全列をリセットする(resetTaskById_と同じ内容: none/空欄に戻す)。
+//
+// 「詰まっている」の定義(どちらか一方でも該当すれば詰まりとみなす):
+// ・QUE=pushedのまま、QUE_TIME(積み込み時刻)からthresholdMinutes分以上経過
+//   (QUEに積まれたはずが、処理完了/エラーの記録が返ってこないまま放置された。
+//    典型例: GASの実行時間制限などで、処理の完了処理まで辿り着けずに
+//    実行が強制終了した場合)
+// ・TASK=waitのまま、TASK_WAIT_TIMEを過ぎている
+//   (通常はTASK整理(clearExpiredWaitTasks_)がここを解除するが、
+//    「wait解除の担当自身がこのキーだった」場合、他に解除できる者がいない)
+//
+// 通常のreserveTaskByKey_(task===none必須)では、この2状態のどちらでも
+// 予約に失敗し続けてしまう。QUE整理(CLEAR_QUE)のように「自分自身の実行
+// でしか自分の詰まりを解消できない」taskについては、予約を試みる直前に
+// これを呼んで強制的に立て直す(enqueueQueCleanupTrigger参照)。
+//
+// ★force reset + reserveを1つの関数にまとめていない理由:
+//   状態が壊れていない通常時は、この関数は何もしない(false を返すだけ)。
+//   後続の通常のreserveTaskByKey_(task===none必須)がそのまま機能するので、
+//   通常の予約ロジック自体には手を入れずに済む。
+// ============================
+
+function repairStuckTaskByKey_(key, thresholdMinutes) {
+  if (!key) {
+    return false;
+  }
+
+  const minutes = Number(thresholdMinutes);
+
+  if (!minutes || minutes <= 0) {
+    return false;
+  }
+
+  const taskItem = getTaskItemByKey(key);
+
+  if (!taskItem) {
+    return false;
+  }
+
+  const now = new Date();
+  let stuck = false;
+  let reason = "";
+
+  if (taskItem.que === TASK_CONFIG.QUE_FLAG.PUSHED) {
+    const queTime = parseTaskDateTime_(taskItem.queTime);
+
+    if (queTime && (now.getTime() - queTime.getTime()) / (1000 * 60) >= minutes) {
+      stuck = true;
+      reason = `QUE=pushedのまま放置(QUE_TIME=${taskItem.queTime}から${minutes}分以上経過)`;
+    }
+  }
+
+  if (!stuck && taskItem.task === TASK_CONFIG.STATUS.WAIT) {
+    const waitTime = parseTaskDateTime_(taskItem.taskWaitTime);
+
+    if (waitTime && now.getTime() >= waitTime.getTime()) {
+      stuck = true;
+      reason = `TASK=waitのまま期限切れ(TASK_WAIT_TIME=${taskItem.taskWaitTime}を経過)`;
+    }
+  }
+
+  if (!stuck) {
+    return false;
+  }
+
+  const repaired = resetTaskById_(taskItem.id);
+
+  if (repaired) {
+    console.log(`【TASK】自己修復: key=${key} / 理由=${reason}`);
+  }
+
+  return repaired;
+}
+
+
+// ============================
+// TASK整理: 1分ごとの独立トリガー。
+//
+// ★QUEシート・QUE命令には一切依存しない。TASKシートの読み書きだけで
+//   完結するシステムメンテナンス処理であることを、関数名(system処理だと
+//   分かるラッパー)と、この位置(TaskManager.gs = TASKシート専用ファイル)
+//   の両方で明示している。
+//
+// ・GUARD失効解除(clearExpiredTaskGuards_)
+// ・wait失効解除(clearExpiredWaitTasks_) ※全task共通
+// ・pushed放置タイムアウト解除(clearTimedOutQueuedTasks_) ※全task共通
+// ・reserve重複整理(dedupeReservedTasksByGroupAndTarget_)
+//
+// 以前はこれら全部を「QUE整理」(QUE経由・10分に1回)が担っていたが、
+// QUE整理自身が詰まると誰も解除できなくなる循環依存があったため、
+// QUEと無関係なこの独立トリガーに切り出した。
+// ============================
+
+const TASK_CLEANUP_THRESHOLD_MINUTES = 10;
+
+function taskCleanupTrigger() {
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(30000)) {
+    console.log("【TASK整理】ロック取得失敗のためスキップ");
+    return;
+  }
+
+  try {
+    const clearedGuards = clearExpiredTaskGuards_();
+    const clearedWaitTasks = clearExpiredWaitTasks_();
+    const resetTimedOutTasks = clearTimedOutQueuedTasks_(TASK_CLEANUP_THRESHOLD_MINUTES);
+    const dedupedTasks = dedupeReservedTasksByGroupAndTarget_();
+
+    console.log(`【TASK整理】完了: GUARD解除${clearedGuards}件 / WAIT解除${clearedWaitTasks}件 / pushedタイムアウト解除${resetTimedOutTasks}件 / 重複整理${dedupedTasks}件`);
+  } finally {
+    lock.releaseLock();
+  }
 }

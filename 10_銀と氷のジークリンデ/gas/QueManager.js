@@ -31,8 +31,8 @@
  *   PV取得シート更新     優先度50
  *   PV取得実行          優先度60(未処理が残れば自分自身をまた積む)
  *
- * ■QUE整理(最優先の特別な命令)
- * ・enqueueQueCleanupTrigger という専用の5分トリガーが積む
+ * ■QUE整理(QUEシート専用の掃除+自分自身の自己修復)
+ * ・enqueueQueCleanupTrigger という専用の10分トリガーが積む
  *   (既に未処理/処理中で存在するなら重複スキップ)。
  * ・pickNextQueItem_は、シート上のどこにあっても「QUE整理」を
  *   最優先で選ぶ。「QUE整理」が処理中の間は、他の一切の命令は
@@ -49,6 +49,24 @@
  *   (GASの実行時間制限などで)処理中のまま固まると、削除できる者が
  *   誰もいなくなり、QUE全体が永久に詰まる。シンプルさを優先して
  *   このリスクを受け入れる、という判断で今はこの形にしている。
+ * ・★TASKシート全般の掃除(GUARD失効・wait失効・pushed放置タイムアウト・
+ *   reserve重複整理)はもうQUE整理の仕事ではない。TaskManager.gsの
+ *   taskCleanupTrigger(1分・QUEを介さない独立トリガー)に移した。
+ *   理由: QUE整理は10分に1回しか動かないうえ、QUE整理自身のTASK行が
+ *   wait/pushedのまま詰まると「詰まりを解消できるのはQUE整理自身の
+ *   実行結果だけ」という循環依存でデッドロックしてしまうため。
+ *   TASKシート側の掃除をQUEと無関係な頻度の高い独立トリガーに切り出す
+ *   ことで、他のtaskはQUE整理の生死に関係なく詰まりが解消され続け、
+ *   QUE整理自身は次項の自己修復だけで詰まりから抜け出せるようにした。
+ * ・★QUE整理自身の自己修復: enqueueQueCleanupTrigger は、通常の
+ *   reserveTaskByKey_(task===noneでないと予約できない)を呼ぶ前に、
+ *   repairStuckTaskByKeyFromQue でCLEAR_QUE自身のTASK行が
+ *   「QUE=pushedのまま放置」または「TASK=waitのまま期限切れ」で
+ *   詰まっていないかを確認し、詰まっていれば強制的に全列リセットしてから
+ *   予約を試みる。これにより「自分の詰まりを自分でしか直せない」という
+ *   循環依存を断ち切っている。二重にQUEへ積んでしまう心配は、
+ *   enqueue_側の重複チェック(isDuplicateInQue_/hasActiveQueCommand_)が
+ *   別途防いでくれるので不要。
  *
  * ■検索ブロック(検索API叩けの間隔をあけるための仕組み)
  * ・検索API叩けの処理(processFetchApiCommand_)が完了した直後に、
@@ -259,6 +277,12 @@ function setTaskWaitForQue(taskKey) {
 
 function dedupeReservedTasksByGroupAndTargetFromQue() {
   return dedupeReservedTasksByGroupAndTarget_();
+}
+
+// QUE整理自身(またはその他のkey)のTASK行が詰まっていないかを確認し、
+// 詰まっていれば強制リセットする。TaskManager.gsのrepairStuckTaskByKey_を参照。
+function repairStuckTaskByKeyFromQue(key, thresholdMinutes) {
+  return repairStuckTaskByKey_(key, thresholdMinutes);
 }
 
 function ensureTaskSheetReadyFromQue_() {
@@ -1069,6 +1093,9 @@ function queWorkerTrigger() {
 // ============================
 // 「QUE整理」の実処理本体。
 //
+// ■役割はQUEシートの掃除だけに限定している(TASKシート全般の掃除は
+//   TaskManager.gsのtaskCleanupTrigger(1分・独立)へ移した)。
+//
 // 削除する対象:
 // ・「処理中」のまま処理開始日時(H列)から10分以上経過した行
 // ・「待機」のまま作成日時(G列)から10分以上経過した行(検索ブロックの期限切れ)
@@ -1084,7 +1111,7 @@ const QUE_CLEANUP_THRESHOLD_MINUTES = 10;
 /**
  * 「処理中」で10分未満のQUEが存在するかチェック。
  * QUE整理を実施すべきか判定に使う。
- * 
+ *
  * @returns {boolean} 「処理中」で10分未満のQUEが存在する場合 true
  */
 function hasActiveInProgressQueItems_() {
@@ -1182,14 +1209,14 @@ function processQueCleanupCommand_() {
     }
   }
 
-  const clearedGuards = clearExpiredTaskGuardsFromQue();
-  const clearedWaitTasks = clearExpiredWaitTasksFromQue();
-  const resetTimedOutTasks = clearTimedOutQueuedTasksFromQue(QUE_CLEANUP_THRESHOLD_MINUTES);
-  const dedupedTasks = dedupeReservedTasksByGroupAndTargetFromQue();
+  // ★TASKシート全般の掃除(GUARD/wait/pushedタイムアウト/重複)は
+  //   taskCleanupTrigger(1分・独立トリガー)に任せる。ここでは、
+  //   自分自身(QUE整理)を通常のtaskの完了処理と同じ形で「wait」に戻すのと、
+  //   QUE整理固有のlock掃除だけを行う。
   const setCleanupWait = setTaskWaitForQue(TASK_TRIGGER_KEY.CLEAR_QUE);
   const clearedExpiredLocks = clearExpiredLocks(QUE_CLEANUP_THRESHOLD_MINUTES);
 
-  console.log(`【QUE整理】完了: QUE削除${deletedCount}件 / TASK_GUARD解除${clearedGuards}件 / TASK_WAIT解除${clearedWaitTasks}件 / TASKタイムアウト解除${resetTimedOutTasks}件 / TASK重複整理${dedupedTasks}件 / Lock期限切れ削除${clearedExpiredLocks}件 / QUE整理WAIT設定=${setCleanupWait}`);
+  console.log(`【QUE整理】完了: QUE削除${deletedCount}件 / Lock期限切れ削除${clearedExpiredLocks}件 / QUE整理WAIT設定=${setCleanupWait}`);
 }
 
 
@@ -1212,13 +1239,21 @@ function isOlderThanMinutes_(dateValue, now, thresholdMinutes) {
 
 
 // ============================
-// 「QUE整理」積み込み専用トリガー(5分ごと)
+// 「QUE整理」積み込み専用トリガー(10分ごと)
+//
+// ★予約(reserveTaskByKey_)を試みる前に、CLEAR_QUE自身のTASK行が
+//   「QUE=pushedのまま放置」または「TASK=waitのまま期限切れ」で
+//   詰まっていないかを確認し、詰まっていれば強制的にリセットする
+//   (repairStuckTaskByKeyFromQue)。これはQUE整理自身の自己修復であり、
+//   循環依存(自分の詰まりを直せるのは自分の実行結果だけ)を断ち切るための
+//   ものなので、CLEAR_QUEに対してのみ行う。
 //
 // 既に未処理/処理中の「QUE整理」が存在する場合は、enqueue_の通常の
 // 重複チェックによりスキップされる(多重登録されない)。
 // ============================
 
 function enqueueQueCleanupTrigger() {
+  repairStuckTaskByKeyFromQue(TASK_TRIGGER_KEY.CLEAR_QUE, QUE_CLEANUP_THRESHOLD_MINUTES);
   reserveTaskByKey_(TASK_TRIGGER_KEY.CLEAR_QUE, "");
 }
 

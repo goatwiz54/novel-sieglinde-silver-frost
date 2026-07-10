@@ -35,6 +35,12 @@
  *   スクリプト側では並び替えを一切行わない。サマリ・10分集計の
  *   位置はテンプレートのまま維持され、日別シートは新規作成のたびに
  *   末尾へ追加されていく(insertSheetのデフォルト挙動)。
+ *
+ * ■検索APIのページング方式(動的・末尾追従型)
+ * ・以前は SEARCH_API_START_LIST に固定した st の並びを毎回全部叩いていたが、
+ *   「検索結果」シート末尾の更新日時から取得すべき範囲(lastup)を組み立て、
+ *   取得データが現在時刻の直近(SEARCH_API_CUTOFF_MINUTES分以内)に届いたら
+ *   打ち切る方式に変更した。詳細は fetchSearchApiPages_() を参照。
  **********************************************************************/
 
 
@@ -57,9 +63,23 @@ const CONFIG = {
 
   LIMIT_DATE: "2026/12/31 23:59:59",
 
-//  API_URL: "https://api.syosetu.com/novelapi/api/?out=json&order=new&lim=500",
-  API_URL: "https://api.syosetu.com/novelapi/api/?out=json&order=old&lim=500&lastup=1783568400-1783609199&of=n-t-gl",
-  SEARCH_API_START_LIST: [1, 500, 1000, 1501, 2001, 2501, 3001, 3501],
+  // st・lastupは毎回 fetchSearchApiPages_() が動的に組み立てて上書きするため、
+  // ここには付けない(order・lim・ofなど固定パラメータのみ)。
+  API_URL: "https://api.syosetu.com/novelapi/api/?out=json&order=old&lim=500&of=n-t-gl",
+
+  // 検索APIの1ページあたりの取得件数(なろうAPIの lim と一致させる)
+  SEARCH_API_LIM: 500,
+
+  // 「検索結果」シート末尾の更新日時から取得ページの st を進めつつ、
+  // 現在時刻からSEARCH_API_CUTOFF_MINUTES分以内のデータが取れたら打ち切る。
+  SEARCH_API_CUTOFF_MINUTES: 10,
+
+  // 1回の処理(①プロセス)内で連続取得してよい最大ページ数
+  SEARCH_API_MAX_CONTINUOUS_FETCH: 4,
+
+  // 「検索結果」シートがまだ空(初回実行等)の場合の、lastup開始位置の初期値(分)
+  SEARCH_API_INITIAL_LOOKBACK_MINUTES: 60,
+
   SEARCH_API_PAGE_INTERVAL_MS: 30000,
   SEARCH_API_FETCH_LOG_SHEET_NAME: "検索API取得ログ",
 
@@ -287,15 +307,32 @@ function timeToMinute_(timeStr) {
 
 
 // ============================
-// 検索APIのページング取得
-// st=1,251,501,751 などを順番に取得し、ページごとの状態を返す
+// 検索APIのページング取得(末尾追従・動的打ち切り方式)
+//
+// ・「検索結果」シート末尾の更新日+時刻を起点(lastup開始)とし、
+//   終了は毎回そのときの「現在時刻」までを指定して取得する。
+// ・st は 1, 1+lim, 1+2*lim, ... と進め、なろうAPIのページングに従う。
+// ・取得したページの中に「現在時刻から SEARCH_API_CUTOFF_MINUTES 分以内」の
+//   更新日時を持つ作品が1件でもあれば、直近まで追いついたとみなして打ち切る。
+// ・見つからなければ、まだ古いデータの続きとみなして次ページ(st前進)を取得する。
+// ・この「見つからないので継続」は SEARCH_API_MAX_CONTINUOUS_FETCH 回まで
+//   (①プロセス内での連続取得上限)。
+// ・取得件数がlim未満だった場合は、その先にデータが存在しないのでそこで打ち切る。
 // ============================
 
-function buildSearchApiUrlByStart_(start) {
-  const baseUrl = String(CONFIG.API_URL || "").replace(/([?&])st=\d+(&|$)/, "$1").replace(/[?&]$/, "");
+function stripQueryParam_(url, paramName) {
+  return String(url || "")
+    .replace(new RegExp(`([?&])${paramName}=[^&]*(&|$)`), "$1")
+    .replace(/[?&]$/, "");
+}
+
+function buildSearchApiUrl_(start, lastupStartEpoch, lastupEndEpoch) {
+  let baseUrl = stripQueryParam_(CONFIG.API_URL, "st");
+  baseUrl = stripQueryParam_(baseUrl, "lastup");
+
   const separator = baseUrl.indexOf("?") === -1 ? "?" : "&";
 
-  return `${baseUrl}${separator}st=${start}`;
+  return `${baseUrl}${separator}st=${start}&lastup=${lastupStartEpoch}-${lastupEndEpoch}`;
 }
 
 function parseNarouUpdatedAt_(value) {
@@ -338,9 +375,10 @@ function buildUpdatedAtRange_(novels) {
   return { oldest: oldest, newest: newest };
 }
 
-function fetchSearchApiPageByStart_(start) {
+// start: st(表示開始位置) / lastupStartEpoch,lastupEndEpoch: lastup範囲(UNIX秒)
+function fetchSearchApiPageByStart_(start, lastupStartEpoch, lastupEndEpoch) {
   const fetchedAt = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-  const url = buildSearchApiUrlByStart_(start);
+  const url = buildSearchApiUrl_(start, lastupStartEpoch, lastupEndEpoch);
 
   try {
     const response = UrlFetchApp.fetch(url);
@@ -378,24 +416,67 @@ function fetchSearchApiPageByStart_(start) {
   }
 }
 
-function fetchSearchApiPages_() {
-  const starts = (CONFIG.SEARCH_API_START_LIST && CONFIG.SEARCH_API_START_LIST.length > 0)
-    ? CONFIG.SEARCH_API_START_LIST
-    : [1, 501, 1001, 1501, 2001, 2501, 3001, 3501];
+// tailDate: 「検索結果」シート末尾の更新日+時刻(Dateオブジェクト)。
+//           シートがまだ空(初回実行など)の場合は null を渡す
+//           (その場合は SEARCH_API_INITIAL_LOOKBACK_MINUTES 分前を起点にする)。
+function fetchSearchApiPages_(tailDate) {
+  const lim = Number(CONFIG.SEARCH_API_LIM || 500);
+  const maxContinuousFetch = Number(CONFIG.SEARCH_API_MAX_CONTINUOUS_FETCH || 4);
+  const cutoffMinutes = Number(CONFIG.SEARCH_API_CUTOFF_MINUTES || 10);
   const intervalMs = Number(CONFIG.SEARCH_API_PAGE_INTERVAL_MS || 0);
+  const lookbackMinutes = Number(CONFIG.SEARCH_API_INITIAL_LOOKBACK_MINUTES || 60);
+
+  const startDate = tailDate || new Date(Date.now() - lookbackMinutes * 60 * 1000);
+  const lastupStartEpoch = Math.floor(startDate.getTime() / 1000);
+
   const pageResults = [];
+  let stopReason = "";
 
-  for (let i = 0; i < starts.length; i++) {
-    const start = starts[i];
-    console.log(`Fetching search API page starting at ${start}...`);
-    pageResults.push(fetchSearchApiPageByStart_(start));
+  for (let i = 0; i < maxContinuousFetch; i++) {
+    const st = 1 + i * lim;
 
-    const isLast = (i === starts.length - 1);
+    // 「終了」は毎回そのときの現在時刻まで(取得範囲を常に最新へ追従させる)
+    const nowEpoch = Math.floor(Date.now() / 1000);
 
-    if (!isLast && intervalMs > 0) {
+    console.log(`Fetching search API page (st=${st}, lastup=${lastupStartEpoch}-${nowEpoch})...`);
+    const pageResult = fetchSearchApiPageByStart_(st, lastupStartEpoch, nowEpoch);
+    pageResults.push(pageResult);
+
+    if (pageResult.status === "ERROR") {
+      stopReason = "ERROR";
+      break;
+    }
+
+    // 現在時刻からcutoffMinutes分以内の更新データが1件でもあれば、
+    // 直近まで追いついたとみなして打ち切る
+    const cutoffThresholdMs = Date.now() - cutoffMinutes * 60 * 1000;
+
+    const hasRecentData = pageResult.novels.some(novel => {
+      const d = parseNarouUpdatedAt_(novel.general_lastup);
+      return d && d.getTime() >= cutoffThresholdMs;
+    });
+
+    if (hasRecentData) {
+      stopReason = "CUTOFF";
+      break;
+    }
+
+    if (pageResult.count < lim) {
+      // 取得件数がlim未満 = この先(次ページ)にはもうデータが無い
+      stopReason = "NO_MORE_DATA";
+      break;
+    }
+
+    const isLast = (i === maxContinuousFetch - 1);
+
+    if (isLast) {
+      stopReason = "MAX_CONTINUOUS_FETCH";
+    } else if (intervalMs > 0) {
       Utilities.sleep(intervalMs);
     }
   }
+
+  console.log(`【検索API】ページ取得終了: 理由=${stopReason} / 取得ページ数=${pageResults.length}`);
 
   const novels = [];
 
@@ -416,6 +497,7 @@ function fetchSearchApiPages_() {
   return {
     pageResults: pageResults,
     novels: novels,
-    status: overallStatus
+    status: overallStatus,
+    stopReason: stopReason
   };
 }

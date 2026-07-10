@@ -32,6 +32,15 @@
  *
  * ・取得データに含まれる対象日付ごとに「日付シート作成」をQUEへ積む
  *   (優先度は全部ベース値のまま積む。並べ替え・採番はワーカー側が行う)
+ *
+ * ■検索APIの取得範囲(末尾追従・動的打ち切り方式)
+ * ・「検索結果」シート末尾(最終行)の更新日+時刻を、なろうAPI取得の
+ *   lastup開始位置として使う(getSearchResultTailDateTime_())。
+ * ・取得したページの中に「現在時刻からSEARCH_API_CUTOFF_MINUTES分以内」の
+ *   更新日時が1件でもあれば、直近まで追いついたとみなして打ち切る。
+ * ・無ければ、まだ追いついていないとみなして次ページ(st前進)を取得する。
+ *   この継続は①プロセスあたりSEARCH_API_MAX_CONTINUOUS_FETCH回まで。
+ * ・詳細な取得・打ち切りロジックは Common.gs の fetchSearchApiPages_() を参照。
  **********************************************************************/
 
 
@@ -54,7 +63,9 @@ function processFetchApiCommand_() {
     return;
   }
 
-  const fetchResult = fetchSearchApiPages_();
+  const tailDate = getSearchResultTailDateTime_();
+
+  const fetchResult = fetchSearchApiPages_(tailDate);
 
   writeSearchApiFetchLogs_(fetchResult.pageResults, fetchResult.status);
 
@@ -111,7 +122,7 @@ function processFetchApiCommand_() {
     }
   });
 
-  console.log(`【検索API】完了: ${rows.length}件 / 対象日付${uniqueDates.length}件 / TASK予約${reservedCount}件 / status=${fetchResult.status}`);
+  console.log(`【検索API】完了: ${rows.length}件 / 対象日付${uniqueDates.length}件 / TASK予約${reservedCount}件 / status=${fetchResult.status} / 打ち切り理由=${fetchResult.stopReason}`);
 
   // 検索APIタスクをwait状態へ遷移させる。待機時間はTASK_WAIT(min)列を参照する。
   const setWait = setTaskWaitByKey_(TASK_TRIGGER_KEY.FETCH_SEARCH_API);
@@ -152,6 +163,45 @@ function dedupeNovelsByNcode_(novels) {
   });
 
   return Array.from(byNcode.values());
+}
+
+
+// ============================
+// 「検索結果」シート末尾(最終行)の「更新日+時刻」をDateオブジェクトで返す。
+// ・シートが無い/データ行が無い/末尾の日付時刻が不正な場合は null。
+// ・呼び出し側(fetchSearchApiPages_)は null の場合、
+//   SEARCH_API_INITIAL_LOOKBACK_MINUTES分前を起点として扱う。
+// ============================
+
+function getSearchResultTailDateTime_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SEARCH_RESULT_SHEET_NAME);
+
+  if (!sheet) {
+    return null;
+  }
+
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return null;
+  }
+
+  const values = sheet.getRange(lastRow, 1, 1, 2).getDisplayValues()[0];
+  const dateStr = values[0];
+  const timeStr = values[1];
+
+  if (!dateStr || !timeStr) {
+    return null;
+  }
+
+  const dateObj = new Date(`${dateStr} ${timeStr}:00`.replace(/-/g, "/"));
+
+  if (isNaN(dateObj.getTime())) {
+    return null;
+  }
+
+  return dateObj;
 }
 
 function getOrCreateSearchApiFetchLogSheet_() {
@@ -244,7 +294,15 @@ function upsertSearchResultSheet_(rows) {
     const existingSheetRow = tail.index.get(key);
 
     if (existingSheetRow) {
-      sheet.getRange(existingSheetRow, 1, 1, row.length).setValues([row]);
+      const targetRange = sheet.getRange(existingSheetRow, 1, 1, row.length);
+      // ★書き込み直前に文字列(@)形式を強制する。これが無いと、Sheetsが
+      // "08:44"のような値を時刻として自動認識し、表示・格納が「8:44」
+      // (先頭ゼロなし)になってしまう。末尾ウィンドウやTASK連携の
+      // 文字列比較(yyyy-MM-dd HH:mm)はゼロ埋め前提のため、これが崩れると
+      // 比較結果がおかしくなる。書き込む「その行だけ」に適用するので、
+      // 他の既存行(まだ矯正していない古い行)には影響しない。
+      targetRange.setNumberFormat("@");
+      targetRange.setValues([row]);
       updatedCount++;
     } else {
       rowsToAppend.push(row);
@@ -255,10 +313,65 @@ function upsertSearchResultSheet_(rows) {
 
   if (rowsToAppend.length > 0) {
     const startRow = sheet.getLastRow() + 1;
-    sheet.getRange(startRow, 1, rowsToAppend.length, rowsToAppend[0].length).setValues(rowsToAppend);
+    const appendRange = sheet.getRange(startRow, 1, rowsToAppend.length, rowsToAppend[0].length);
+    // ★新規追加行も同様に、書き込み直前に文字列(@)形式を強制する。
+    appendRange.setNumberFormat("@");
+    appendRange.setValues(rowsToAppend);
   }
 
   console.log(`【検索結果】更新:${updatedCount}件 / 新規追加:${rowsToAppend.length}件 / 記録済みスキップ:${skippedOldCount}件`);
+}
+
+
+// ============================
+// 【手動実行専用・1回でよい】既存の「検索結果」シートで、A列(更新日)・
+// B列(時刻)がSheetsによって日付/時刻値として自動認識され、
+// 先頭ゼロなし("8:44"等)で表示・格納されてしまっている行を、
+// 正しい "yyyy-MM-dd"/"HH:mm" の文字列へ矯正する。
+//
+// ★実行順序が重要: 先に現在の表示値(getDisplayValues、壊れていれば
+// "8:44"のような状態)を読み切ってから、列の書式を文字列(@)へ変更し、
+// 最後に正規化した文字列を書き戻す。この順序を逆にする(先に書式だけ
+// 変えてしまう)と、既存の時刻セルが生の シリアル値のまま表示されて
+// しまい、かえって壊れる。
+//
+// 実行手順: Apps Scriptエディタでこの関数を選択して1回実行するだけ。
+// ============================
+
+function repairSearchResultDateTimeFormat_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SEARCH_RESULT_SHEET_NAME);
+
+  if (!sheet) {
+    console.log("【検索結果】シートが見つかりません");
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    console.log("【検索結果】データ行がありません");
+    return;
+  }
+
+  const totalRows = lastRow - 1;
+  const range = sheet.getRange(2, 1, totalRows, 2); // A列(更新日)・B列(時刻)
+
+  // ①現在の表示値を先に読み切る(壊れていれば "8:44" のような状態のまま読める)
+  const displayValues = range.getDisplayValues();
+
+  // ②そのあとで列全体を文字列(@)形式へ矯正する
+  sheet.getRange("A:H").setNumberFormat("@");
+
+  // ③正規化(ゼロ埋め)した文字列を書き戻す
+  const fixedValues = displayValues.map(row => [
+    normalizeDateString_(row[0]),
+    normalizeTimeString_(row[1])
+  ]);
+
+  range.setValues(fixedValues);
+
+  console.log(`【検索結果】日付/時刻フォーマットを矯正しました: ${totalRows}行`);
 }
 
 
