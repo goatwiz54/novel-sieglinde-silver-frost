@@ -52,7 +52,9 @@ function getLockSheet_() {
  */
 function protectLockSheet_(sheet) {
   try {
-    if (sheet.isProtected()) {
+    const protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+    const isAlreadyProtected = protections.some(p => p.getDescription() === "Lock sheet for concurrent access control");
+    if (isAlreadyProtected) {
       return true; // 既にプロテクト中
     }
     
@@ -72,11 +74,7 @@ function protectLockSheet_(sheet) {
  */
 function unprotectLockSheet_(sheet) {
   try {
-    if (!sheet.isProtected()) {
-      return true; // プロテクトなし
-    }
-
-    const protections = sheet.getProtections(PropertiesService.DocumentProperties);
+    const protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
     protections.forEach(p => {
       if (p.getDescription() === "Lock sheet for concurrent access control") {
         p.remove();

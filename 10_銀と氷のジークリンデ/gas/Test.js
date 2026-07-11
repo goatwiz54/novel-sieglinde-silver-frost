@@ -277,3 +277,52 @@ function testBackfillSearchResultGap() {
     console.log(`【Testエラー】${err.stack || err}`);
   }
 }
+
+// ============================
+// 【デバッグ用】TASKシートの trigger_update_pv 系タスクの状態を確認する
+// ============================
+function testCheckUpdatePvTasks() {
+  try {
+    console.log("【Test】TASKシートの trigger_update_pv 系タスクの状態を確認します...");
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("TASK");
+    if (!sheet) {
+      console.log("【Testエラー】TASKシートが見つかりません。");
+      return;
+    }
+    
+    const lastRow = sheet.getLastRow();
+    console.log(`【Test】TASKシートの最終行: ${lastRow}`);
+    if (lastRow < 2) {
+      console.log("【Testエラー】TASKシートにデータ行がありません。");
+      return;
+    }
+    
+    const values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+    let count = 0;
+    
+    values.forEach((row, idx) => {
+      const id = row[0];
+      const name = row[1];
+      const key = row[2];
+      const groupKey = row[3];
+      const target = row[4];
+      const guard = row[5];
+      const task = row[6];
+      const que = row[10];
+      
+      if (String(key).indexOf("trigger_update_pv") === 0) {
+        count++;
+        console.log(`行${idx + 2} [ID=${id}]: key="${key}", name="${name}", task="${task}", que="${que}", target="${target}", guard="${guard}"`);
+      }
+    });
+    
+    console.log(`【Test】対象のタスク数: ${count}件`);
+    
+    console.log("【Test】手動で reserveTaskByKeyPrefix_('trigger_update_pv', '2026-07-11') をテスト呼び出しします...");
+    const result = reserveTaskByKeyPrefix_("trigger_update_pv", "2026-07-11");
+    console.log(`【Test】呼び出し結果: ${result}`);
+    
+  } catch (err) {
+    console.log(`【Testエラー】${err.stack || err}`);
+  }
+}

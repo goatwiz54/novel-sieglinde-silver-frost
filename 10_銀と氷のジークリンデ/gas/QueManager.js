@@ -1212,12 +1212,10 @@ function processQueCleanupCommand_() {
 
   // ★TASKシート全般の掃除(GUARD/wait/pushedタイムアウト/重複)は
   //   taskCleanupTrigger(1分・独立トリガー)に任せる。ここでは、
-  //   自分自身(QUE整理)を通常のtaskの完了処理と同じ形で「wait」に戻すのと、
-  //   QUE整理固有のlock掃除だけを行う。
+  //   自分自身(QUE整理)を通常のtaskの完了処理と同じ形で「wait」に戻す。
   const setCleanupWait = setTaskWaitForQue(TASK_TRIGGER_KEY.CLEAR_QUE);
-  const clearedExpiredLocks = clearExpiredLocks(QUE_CLEANUP_THRESHOLD_MINUTES);
 
-  console.log(`【QUE整理】完了: QUE削除${deletedCount}件 / Lock期限切れ削除${clearedExpiredLocks}件 / QUE整理WAIT設定=${setCleanupWait}`);
+  console.log(`【QUE整理】完了: QUE削除${deletedCount}件 / QUE整理WAIT設定=${setCleanupWait}`);
   SpreadsheetApp.flush();
 }
 

@@ -31,8 +31,51 @@ const PV_SHEET_NAME = "PV取得";
 // ============================
 
 function processUpdatePvSheetCommand_(targetDateStr) {
-  const year = targetDateStr.substring(0, 4);
-  const month = targetDateStr.substring(5, 7);
+  let dateStr = targetDateStr;
+
+  if (!dateStr) {
+    const now = new Date();
+    const year = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy");
+    const month = Utilities.formatDate(now, CONFIG.TIMEZONE, "MM");
+    const currentFileKey = `${year}年${month}月`;
+
+    try {
+      const spreadsheet = findMonthlySpreadsheetIfExists_(currentFileKey);
+      if (spreadsheet) {
+        const sheet = spreadsheet.getSheetByName("PV取得");
+        if (sheet) {
+          const lastRow = sheet.getLastRow();
+          if (lastRow >= 2) {
+            const values = sheet.getRange(2, 2, lastRow - 1, 3).getDisplayValues(); // B:ステータス, D:日付
+            const dates = [];
+            values.forEach(row => {
+              const status = row[0]; // B列
+              const dStr = row[2];  // D列
+              if (status === "未処理" && dStr) {
+                dates.push(dStr);
+              }
+            });
+
+            if (dates.length > 0) {
+              dates.sort(); // 昇順ソートして最古の日付を取得
+              dateStr = dates[0];
+              console.log(`【PV取得シート更新】QUEに対象日付が指定されていなかったため、未処理行から最古の日付「${dateStr}」を自動検出しました。`);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.log(`【PV取得シート更新】未処理日付の自動検出中にエラーが発生しました: ${err.message}`);
+    }
+  }
+
+  if (!dateStr) {
+    console.log("【PV取得シート更新】対象日付が指定されておらず、未処理行からも日付を検出できなかったため処理をスキップします。");
+    return;
+  }
+
+  const year = dateStr.substring(0, 4);
+  const month = dateStr.substring(5, 7);
   const fileKey = `${year}年${month}月`;
 
   const spreadsheet = findMonthlySpreadsheetIfExists_(fileKey);
@@ -42,15 +85,15 @@ function processUpdatePvSheetCommand_(targetDateStr) {
     return;
   }
 
-  const dateObj = new Date(`${targetDateStr}T00:00:00`);
+  const dateObj = new Date(`${dateStr}T00:00:00`);
   const dailySheet = findExistingDailySheet_(spreadsheet, dateObj);
 
   if (!dailySheet) {
-    console.log(`【PV取得シート更新】日別シートが見つかりません: ${targetDateStr}`);
+    console.log(`【PV取得シート更新】日別シートが見つかりません: ${dateStr}`);
     return;
   }
 
-  const checkpoints = buildPvCheckpointsFromDailySheet_(dailySheet, targetDateStr);
+  const checkpoints = buildPvCheckpointsFromDailySheet_(dailySheet, dateStr);
 
   const ss = spreadsheet; // ★月別ファイル(日別シートと同じファイル)に書き込む。テンプレートではない。
   let pvSheet = ss.getSheetByName(PV_SHEET_NAME);
@@ -87,10 +130,10 @@ function processUpdatePvSheetCommand_(targetDateStr) {
     pvSheet.getRange(startRow, 1, rowsToAppend.length, rowsToAppend[0].length).setValues(rowsToAppend);
   }
 
-  console.log(`【PV取得シート更新】${targetDateStr} 追加:${rowsToAppend.length}件`);
+  console.log(`【PV取得シート更新】「${fileKey}」ファイルの「PV取得」シートに新規行を ${rowsToAppend.length} 件追加しました。 (対象日付: ${dateStr})`);
 
   if (rowsToAppend.length > 0) {
-    reserveTaskByKeyPrefix_(TASK_TRIGGER_PREFIX.FETCH_PV, targetDateStr);
+    reserveTaskByKeyPrefix_(TASK_TRIGGER_PREFIX.FETCH_PV, dateStr);
   }
 }
 

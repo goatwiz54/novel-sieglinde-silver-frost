@@ -83,54 +83,21 @@ const PV_FETCHALL_CHUNK_INTERVAL_MS = 5000;
 // ============================
 
 function enqueuePvFetchSheetTrigger() {
-  reserveTaskByKeyPrefix_(TASK_TRIGGER_PREFIX.FETCH_PV, "");
-}
+  const now = new Date();
+  const year = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy");
+  const month = Utilities.formatDate(now, CONFIG.TIMEZONE, "MM");
+  const fileKey = `${year}年${month}月`;
 
-// ============================
-// 「PV取得実行」の実処理本体
-//
-// targetDateStr:
-//   ・指定あり → その日付の行だけに絞り込んで処理する
-//   ・null/""  → 日付で絞り込まず、シートの上から順番に処理する
-//                (ファイルは実行時点の「今日」の月を開く)
-// ============================
+  let reservedUpdateCount = 0;
 
-function processFetchPvSheetCommand_(targetDateStr) {
-  let fileKey;
-
-  if (targetDateStr) {
-    const year = targetDateStr.substring(0, 4);
-    const month = targetDateStr.substring(5, 7);
-    fileKey = `${year}年${month}月`;
-  } else {
-    const now = new Date();
-    const year = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy");
-    const month = Utilities.formatDate(now, CONFIG.TIMEZONE, "MM");
-    fileKey = `${year}年${month}月`;
-  }
-
-  const spreadsheet = findMonthlySpreadsheetIfExists_(fileKey);
-
-  if (!spreadsheet) {
-    console.log(`【PV取得実行】月別ファイルが見つかりません: ${fileKey}`);
-    return 0;
-  }
-
-  const sheet = spreadsheet.getSheetByName(PV_SHEET_NAME);
-
-  if (!sheet) {
-    console.log("【PV取得実行】「PV取得」シートが見つかりません");
-    return 0;
-  }
-
-  const lastRow = sheet.getLastRow();
-
-  if (lastRow < 2) {
-    console.log("【PV取得実行】データ行がありません");
-    return 0;
-  }
-
-  // 読み込むのは先頭6列のみ(A:完了時刻, B:ステータス, C:NCODE, D:日付, E:時刻文字列, F:旧保存値)
+  try {
+    const spreadsheet = findMonthlySpreadsheetIfExists_(fileKey);
+    if (!spreadsheet) {
+      console.log(`【PV取得トリガー】月別ファイルが見つかりません: ${fileKey}`);
+    } else {
+      const sheet = spreadsheet.getSheetByName("PV取得");
+      if (!sheet) {
+        console.log(`【PV取得トリガー】「PV取得」シートが見つかりませ�  // 読み込むのは先頭6列のみ(A:完了時刻, B:ステータス, C:NCODE, D:日付, E:時刻文字列, F:旧保存値)
   const values = sheet.getRange(2, 1, lastRow - 1, 6).getDisplayValues();
 
   const pendingRows = [];
@@ -144,7 +111,8 @@ function processFetchPvSheetCommand_(targetDateStr) {
       ncode: row[2],
       dateStr: row[3],
       hour: parseInt(String(row[4]).substring(0, 2), 10), // "HH:00" → 整数HH
-      pvRaw: row[5]
+      pvRaw: row[5],
+      hourLabel: row[4]
     });
   });
 
@@ -191,32 +159,106 @@ function processFetchPvSheetCommand_(targetDateStr) {
 
       const hourlyValues = new Array(24).fill("");
 
-      if (!rowResult.ok && PV_PERMANENT_ERROR_REASONS.indexOf(rowResult.reason) !== -1) {
-        // 確定エラー(取得可能範囲外/作品削除済み等): 24列は空欄のまま書き、
-        // 行は完了扱いにして二度と処理しない。
-        sheet.getRange(row.sheetRow, 8, 1, 24).setValues([hourlyValues]);
-        applyPvSheetRow_(sheet, row, rowResult);
-        return;
-      }
-
-      // ★0-23時の表示用24列は、時間帯ゲートなしで、その時点でかささぎから
-      //   取得できているぶんだけ書く。まだ確定していない時間帯は空欄のまま
-      //   (次回実行で自然に埋まる)。
-      for (let h = 0; h < 24; h++) {
-        const raw = PvGetter.fetchPvRawForDateHour_(pvCache, row.ncode, "", row.dateStr, h, fetchStats);
-        if (raw.ok) {
-          hourlyValues[h] = raw.value;
+      // 時間帯未経過などの一時エラー以外は、その時点で取得できている時間帯PVを書き出す
+      if (rowResult.ok || PV_PERMANENT_ERROR_REASONS.indexOf(rowResult.reason) === -1) {
+        for (let h = 0; h < 24; h++) {
+          const raw = PvGetter.fetchPvRawForDateHour_(pvCache, row.ncode, "", row.dateStr, h, fetchStats);
+          if (raw.ok) {
+            hourlyValues[h] = raw.value;
+          }
         }
       }
-      sheet.getRange(row.sheetRow, 8, 1, 24).setValues([hourlyValues]);
 
-      if (rowResult.ok) {
-        // 対象時刻(row.hour)の取得に成功 → 通常の更新ルールを適用して完了扱い
-        applyPvSheetRow_(sheet, row, rowResult);
+      let completionTime = "";
+      let status = "未処理";
+      let pvValue = row.pvRaw;
+      let errorReason = "";
+
+      if (!rowResult.ok) {
+        if (PV_PERMANENT_ERROR_REASONS.indexOf(rowResult.reason) !== -1) {
+          completionTime = buildCompletionTimestamp_();
+          status = "完了";
+          errorReason = rowResult.reason;
+          console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) は確定エラーのため「完了」にしました: 原因=${rowResult.reason}`);
+        } else {
+          // 一時的エラー
+          errorReason = rowResult.reason;
+          console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) は一時的理由のため「未処理」を維持します: 原因=${rowResult.reason}`);
+        }
       } else {
-        // 対象時刻(row.hour)が一時的な失敗(時間帯未経過等) →
-        // ステータスは「未処理」のまま、参考情報だけG列に記録して次回リトライ
-        sheet.getRange(row.sheetRow, 7).setValue(rowResult.reason);
+        // 取得成功
+        const newVal = rowResult.value;
+        const savedRaw = row.pvRaw;
+
+        if (savedRaw === "") {
+          completionTime = buildCompletionTimestamp_();
+          status = "完了";
+          pvValue = newVal;
+          errorReason = "";
+          console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) にPV値を書き込みました: PV=${newVal} (新規書き込み)`);
+        } else {
+          const savedVal = Number(savedRaw);
+          if (isNaN(savedVal)) {
+            completionTime = buildCompletionTimestamp_();
+            status = "完了";
+            errorReason = "保存値不正";
+            console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) は既存データ不正のため「完了」にしました: 保存値=${savedRaw}`);
+          } else if (newVal > savedVal) {
+            completionTime = buildCompletionTimestamp_();
+            status = "完了";
+            pvValue = newVal;
+            errorReason = "";
+            console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) にPV値を書き込みました: PV=${newVal} (前回値=${savedVal} から増加)`);
+          } else if (newVal === savedVal) {
+            completionTime = buildCompletionTimestamp_();
+            status = "完了";
+            errorReason = "";
+            console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) のPV取得が完了しました: PV=${newVal} (前回値=${savedVal} と同値のため更新なし)`);
+          } else {
+            completionTime = buildCompletionTimestamp_();
+            status = "完了";
+            errorReason = "PV減少";
+            console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) はPV減少を検知したため値を上書きせず「完了」にしました: 取得値=${newVal}, 前回値=${savedVal}`);
+          }
+        }
+      }
+
+      // 1行分の全31列を一度に書き込み
+      const updateRowValues = [
+        completionTime, // A: 完了日時
+        status,         // B: ステータス
+        row.ncode,      // C: Nコード
+        row.dateStr,    // D: 日付
+        row.hourLabel,  // E: 時刻
+        pvValue,        // F: PV数
+        errorReason     // G: エラー原因
+      ].concat(hourlyValues); // H〜AE: 24時間分
+
+      sheet.getRange(row.sheetRow, 1, 1, 31).setValues([updateRowValues]);
+    });
+  } catch (e) {
+    if (e && e.message === "URLFETCH_QUOTA_EXCEEDED") {
+      console.log("【PV取得実行】UrlFetch上限超過のため即時終了");
+      return -1;
+    }
+    throw e;
+  }
+
+  console.log(`【PV取得実行】${fileKey} 処理:${toProcess.length}件 / 残り(次回以降):${remainingCount}件`);
+
+  return remainingCount;
+}
+
+
+// ============================
+// 共通タイムスタンプ生成
+// ============================
+function buildCompletionTimestamp_() {
+  const now = new Date();
+  const formatted = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+  const weekday = ["日", "月", "火", "水", "木", "金", "土"][now.getDay()];
+  return `${formatted}(${weekday})`;
+}【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) は一時的理由のため「未処理」を維持します: 原因=${rowResult.reason}`);
       }
     });
   } catch (e) {
@@ -265,13 +307,14 @@ function buildCompletionTimestamp_() {
   return `${formatted}(${weekday})`;
 }
 
-function applyPvSheetRow_(sheet, row, fetched) {
+function applyPvSheetRow_(sheet, row, fetched, fileKey) {
   if (!fetched.ok) {
     if (PV_PERMANENT_ERROR_REASONS.indexOf(fetched.reason) !== -1) {
       // 確定エラー → 完了扱いにして、二度と処理しない
       sheet.getRange(row.sheetRow, 1).setValue(buildCompletionTimestamp_());
       sheet.getRange(row.sheetRow, 2).setValue("完了");
       sheet.getRange(row.sheetRow, 7).setValue(fetched.reason);
+      console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) は確定エラーのため「完了」にしました: 原因=${fetched.reason}`);
     } else {
       // 一時的な失敗 → ステータスは「未処理」のまま(次回リトライ)。
       // エラー原因欄にだけ参考情報を記録する。
@@ -288,6 +331,7 @@ function applyPvSheetRow_(sheet, row, fetched) {
     sheet.getRange(row.sheetRow, 2).setValue("完了");
     sheet.getRange(row.sheetRow, 6).setValue(newVal);
     sheet.getRange(row.sheetRow, 7).setValue("");
+    console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) にPV値を書き込みました: PV=${newVal} (新規書き込み)`);
     return;
   }
 
@@ -297,6 +341,7 @@ function applyPvSheetRow_(sheet, row, fetched) {
     sheet.getRange(row.sheetRow, 1).setValue(buildCompletionTimestamp_());
     sheet.getRange(row.sheetRow, 2).setValue("完了");
     sheet.getRange(row.sheetRow, 7).setValue("保存値不正");
+    console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) は既存データ不正のため「完了」にしました: 保存値=${savedRaw}`);
     return;
   }
 
@@ -305,13 +350,16 @@ function applyPvSheetRow_(sheet, row, fetched) {
     sheet.getRange(row.sheetRow, 2).setValue("完了");
     sheet.getRange(row.sheetRow, 6).setValue(newVal);
     sheet.getRange(row.sheetRow, 7).setValue("");
+    console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) にPV値を書き込みました: PV=${newVal} (前回値=${savedVal} から増加)`);
   } else if (newVal === savedVal) {
     sheet.getRange(row.sheetRow, 1).setValue(buildCompletionTimestamp_());
     sheet.getRange(row.sheetRow, 2).setValue("完了");
     sheet.getRange(row.sheetRow, 7).setValue("");
+    console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) のPV取得が完了しました: PV=${newVal} (前回値=${savedVal} と同値のため更新なし)`);
   } else {
     sheet.getRange(row.sheetRow, 1).setValue(buildCompletionTimestamp_());
     sheet.getRange(row.sheetRow, 2).setValue("完了");
     sheet.getRange(row.sheetRow, 7).setValue("PV減少");
+    console.log(`【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) はPV減少を検知したため値を上書きせず「完了」にしました: 取得値=${newVal}, 前回値=${savedVal}`);
   }
 }
