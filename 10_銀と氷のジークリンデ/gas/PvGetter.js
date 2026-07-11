@@ -18,6 +18,17 @@
  * ■キャッシュ
  *   呼び出し元が同一実行内で使い回すpvCacheオブジェクトを渡すことで、
  *   同じNCODEへのアクセスは1回だけになる(呼び出し元の責任で管理)。
+ *
+ * ■タイムゾーンについて(重要)
+ *   このファイルでは、ネイティブDateオブジェクトのローカル時刻依存の
+ *   操作(new Date(文字列)によるパース、getHours/setHours/getDate/setDate
+ *   などのゲッター・セッター)を一切使わない。これらはすべてGASプロジェクトの
+ *   「タイムゾーン設定」(プロジェクト設定。CONFIG.TIMEZONEとは別の設定値)に
+ *   依存するため、CONFIG.TIMEZONE("Asia/Tokyo")と食い違っていると、
+ *   正しい時間帯のPVなのに「時間帯未経過」と誤判定される等のバグになる。
+ *   代わりに、Utilities.parseDate(タイムゾーン明示指定)とミリ秒(エポック値)
+ *   だけで日時計算を行い、プロジェクトのタイムゾーン設定に一切依存しない
+ *   ようにしている。
  **********************************************************************/
 
 const PvGetter = (function () {
@@ -59,25 +70,90 @@ const PvGetter = (function () {
   // 可能性が高いため、取得を試みない。「時間帯未経過」という一時的な
   // 失敗として返し、呼び出し元はステータスを「未処理」のまま維持して、
   // 時間が経ってから再挑戦する。
-  // (日またぎ(例: 現在0:05→閾値は前日22:00)もDateオブジェクトの
-  //  時間演算にまかせるので、自動的に正しく処理される)
+  //
+  // ★以前はnew Date()のsetHours/setMinutesや、
+  //   new Date(`${dateStr}T${hour}:00:00`)というネイティブのローカル時刻
+  //   依存パースを使っていた。これらはGASプロジェクトのタイムゾーン設定
+  //   (CONFIG.TIMEZONEとは別)に依存するため、その設定がAsia/Tokyoと
+  //   ズレていると、正しい時間帯なのに「時間帯未経過」と誤判定され続ける
+  //   バグの原因になっていた。
+  //   ここでは「時」への切り捨て+2時間引く計算はミリ秒(エポック値)だけで
+  //   行う(JSTはUTC+9固定でDSTが無いため、1時間境界はどの時刻表現で見ても
+  //   ズレない=プロジェクトのタイムゾーン設定に依存しない)。
+  //   checkpoint側の日時は Utilities.parseDate でCONFIG.TIMEZONEを明示
+  //   指定して求める。
   //
   // 戻り値: { ok:true, value:number } | { ok:false, reason:string }
   // ============================
   function fetchPvForDateHour_(pvCache, ncode, title, dateStr, hour, fetchStats) {
     const now = new Date();
 
-    const thresholdDate = new Date(now);
-    thresholdDate.setMinutes(0, 0, 0); // 現在時刻を「時」で切り捨て
-    thresholdDate.setHours(thresholdDate.getHours() - 2); // -2時間
+    const HOUR_MS = 60 * 60 * 1000;
+    const truncatedNowMs = Math.floor(now.getTime() / HOUR_MS) * HOUR_MS; // 現在時刻を「時」で切り捨て
+    const thresholdMs = truncatedNowMs - 2 * HOUR_MS; // -2時間
 
-    const checkpointDate = new Date(`${dateStr}T${String(hour).padStart(2, "0")}:00:00`);
-    
+    const checkpointStr = `${dateStr} ${String(hour).padStart(2, "0")}:00:00`;
+    const checkpointDate = Utilities.parseDate(checkpointStr, CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
 
-    if (checkpointDate >= thresholdDate) {
+    const isHourNotFinished = checkpointDate.getTime() >= thresholdMs;
+
+    // ★時間帯未経過の判定材料をそのままログに出す。
+    //   現在時刻・比較元(閾値=現在時刻を「時」で切り捨てて-2時間したもの)・
+    //   比較先(チェックポイントのdateStr+hour)・判定結果(未経過かどうか)を
+    //   1行にまとめて出すことで、なぜ「時間帯未経過」になったのか/ならなかったのか
+    //   をログだけで追えるようにする。
+    const nowLogStr = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+    const thresholdLogStr = Utilities.formatDate(new Date(thresholdMs), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+    const checkpointLogStr = Utilities.formatDate(checkpointDate, CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+    console.log(`【時間帯判定】${ncode} / 現在時刻=${nowLogStr} / 比較元(現在時刻-2h切捨て)=${thresholdLogStr} / 比較先(PV取得シート:${dateStr} ${String(hour).padStart(2, "0")}:00)=${checkpointLogStr} / 判定=${isHourNotFinished ? "時間帯未経過(スキップ)" : "経過済み(取得へ進む)"}`);
+
+    if (isHourNotFinished) {
       return { ok: false, reason: FAIL.HOUR_NOT_FINISHED };
     }
 
+    const execDateStr = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy-MM-dd");
+    const dayRelation = getDayRelation_(dateStr, execDateStr);
+
+    if (dayRelation === "OUT_OF_RANGE") {
+      console.log(`【PV取得結果】${ncode} ${dateStr} ${String(hour).padStart(2, "0")}:00 => 失敗:${FAIL.OUT_OF_RANGE}`);
+      return { ok: false, reason: FAIL.OUT_OF_RANGE };
+    }
+
+    const whichDay = (dayRelation === "TODAY") ? "today" : "yesterday";
+
+    const result = getPvValue_(pvCache, ncode, title, dateStr, whichDay, hour, fetchStats);
+
+    // ★時間帯の関門は通過したが、その先(かささぎ側のtoday/yesterdayデータ)で
+    //   失敗しているケースを切り分けるためのログ。「未処理のまま」「PVが
+    //   書き込まれない」という症状の原因が、この関門より先にあるかどうかを
+    //   ここで確認できる。
+    console.log(`【PV取得結果】${ncode} ${dateStr} ${String(hour).padStart(2, "0")}:00 (${whichDay}) => ${result.ok ? `成功:${result.value}` : `失敗:${result.reason}`}`);
+
+    return result;
+  }
+
+
+  // ============================
+  // fetchPvForDateHour_ の「時間帯未経過」ゲート抜きバージョン。
+  //
+  // ■なぜ必要か
+  //   「PV取得」シートの1行は特定の(NCODE,日付,時刻)を表すが、その行の
+  //   H〜AE列(0〜23時)には参考として1日24時間ぶんの値を並べて表示する。
+  //   この24列を埋めるためだけに、24時間ぶん毎回「時間帯未経過」の
+  //   ゲート判定をかけていたのが不要な二重判定だった。直近の1〜2時間が
+  //   ゲートに引っかかるだけで行全体が「未処理」のまま固まる原因にも
+  //   なっていた。
+  //
+  //   時間帯未経過の判定は、その行が本来担当する時刻(row.hour)について
+  //   1回だけ行えば十分(fetchPvForDateHour_を使う)。24列の表示データは、
+  //   ゲート抜きでその時点でかささぎから取得できているぶんだけ書けば良く、
+  //   まだ確定していない時間帯は単に空欄のままにしておけばよい(次回の
+  //   実行で自然に埋まる)。
+  //
+  // 戻り値: { ok:true, value:number } | { ok:false, reason:string }
+  // ============================
+  function fetchPvRawForDateHour_(pvCache, ncode, title, dateStr, hour, fetchStats) {
+    const now = new Date();
     const execDateStr = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy-MM-dd");
     const dayRelation = getDayRelation_(dateStr, execDateStr);
 
@@ -86,7 +162,6 @@ const PvGetter = (function () {
     }
 
     const whichDay = (dayRelation === "TODAY") ? "today" : "yesterday";
-
     return getPvValue_(pvCache, ncode, title, dateStr, whichDay, hour, fetchStats);
   }
 
@@ -94,13 +169,18 @@ const PvGetter = (function () {
   // ============================
   // 実行日と対象日付の関係を判定
   // "TODAY" | "YESTERDAY" | "OUT_OF_RANGE"
+  //
+  // ★ここもネイティブDateのgetDate/setDateなどローカル時刻依存の操作は
+  //   使わず、Utilities.parseDateで得たJST基準のエポック値から
+  //   24時間(=86400000ミリ秒)を引くだけで「前日」を求める。
+  //   JSTはDSTが無い固定オフセットなので、この引き算は常に正しい。
   // ============================
   function getDayRelation_(dateStr, execDateStr) {
     if (dateStr === execDateStr) return "TODAY";
 
-    const exec = new Date(execDateStr + "T00:00:00");
-    const yesterday = new Date(exec);
-    yesterday.setDate(yesterday.getDate() - 1);
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const exec = Utilities.parseDate(execDateStr, CONFIG.TIMEZONE, "yyyy-MM-dd");
+    const yesterday = new Date(exec.getTime() - DAY_MS);
     const yesterdayStr = Utilities.formatDate(yesterday, CONFIG.TIMEZONE, "yyyy-MM-dd");
 
     if (dateStr === yesterdayStr) return "YESTERDAY";
@@ -328,6 +408,7 @@ const PvGetter = (function () {
 
   return {
     fetchPvForDateHour_: fetchPvForDateHour_,
+    fetchPvRawForDateHour_: fetchPvRawForDateHour_,
     prefetchNcodePvDataBatch_: prefetchNcodePvDataBatch_
   };
 

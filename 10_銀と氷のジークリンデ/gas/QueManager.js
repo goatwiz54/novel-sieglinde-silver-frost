@@ -11,7 +11,16 @@
  *   C: 対象日付(yyyy-MM-dd。日付を持たない/絞り込まない命令は空欄)
  *   D: 優先度
  *   E: 積み元(どの処理がこの行を積んだか)
- *   F: ステータス(未処理 / 処理中 / 完了 / エラー:〜 / 待機)
+ *   F: ステータス。"ステータス｜ID" の形式(全角｜区切り)で書き込む。
+ *      例: "完了｜QUE-aB3dE7gH" 、 "処理中｜QUE-aB3dE7gH" 、
+ *          "エラー:メッセージ｜QUE-aB3dE7gH"
+ *      ★A列(ID)と重複して見えるが、あえてステータス文字列自身にも
+ *        IDを埋め込んでいる。A列が何らかの理由で空欄/消失していても、
+ *        F列を見るだけでどの行(ID)の状態かが分かるようにするための
+ *        冗長化。ステータスの比較・判定を行う箇所は必ず
+ *        extractQueStatus_() で先頭の実ステータス部分だけを取り出してから
+ *        比較すること(生の値のまま QUE_CONFIG.STATUS.* と比較しないこと)。
+ *      実ステータス自体の値は従来通り: 未処理 / 処理中 / 完了 / エラー:〜 / 待機
  *   G: 作成日時(積まれた時)
  *   H: 処理開始日時(「処理中」になった時)
  *   I: 処理終了日時(「完了」になった時、またはエラー時)
@@ -140,6 +149,32 @@ const QUE_CONFIG = {
     FETCH_PV_SHEET: 60
   }
 };
+
+
+// ============================
+// F列(ステータス)の値を組み立てる/分解するヘルパー。
+//
+// 書き込み形式: "ステータス｜ID" (全角｜区切り。IDが無ければステータスのみ)
+// 例: buildQueStatusValue_("処理中", "QUE-aB3dE7gH") → "処理中｜QUE-aB3dE7gH"
+//
+// A列(ID)と情報が重複するが、A列が何らかの理由で空欄/消失していても
+// F列を見るだけでどの行かが分かるようにするための冗長化。
+//
+// ★F列を読んで実ステータス(未処理/処理中/完了/エラー:〜/待機)と比較する
+//   箇所は、必ずこの extractQueStatus_() を通してから比較すること。
+// ============================
+
+function buildQueStatusValue_(status, queId) {
+  const id = String(queId || "").trim();
+  return id ? `${status}｜${id}` : status;
+}
+
+function extractQueStatus_(rawValue) {
+  const s = String(rawValue || "");
+  const sepIndex = s.indexOf("｜");
+
+  return sepIndex === -1 ? s.trim() : s.substring(0, sepIndex).trim();
+}
 
 
 // ============================
@@ -426,7 +461,7 @@ function hasActiveQueCommand_(commandType, targetDateStr) {
   return values.some(row => {
     const rowCommand = String(row[1] || "").trim();
     const rowTarget = row[2] ? normalizeDateString_(row[2]) : "";
-    const rowStatus = String(row[5] || "").trim();
+    const rowStatus = extractQueStatus_(row[5]);
 
     const isActive = (
       rowStatus === QUE_CONFIG.STATUS.PENDING ||
@@ -477,6 +512,7 @@ function appendQueTrigger() {
     }
   });
 
+  SpreadsheetApp.flush();
   console.log(`【TASK→QUE】積み込み完了: ${appendedCount}件`);
 }
 
@@ -579,6 +615,7 @@ function enqueue_(commandType, targetDateStr, priority, source, allowDuplicate, 
     const now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
     const appendRow = getQueAppendRow_(sheet);
     const queId = generateUniqueQueId_(sheet);
+    const statusValue = buildQueStatusValue_(status, queId);
 
     const appendRange = sheet.getRange(appendRow, 1, 1, 10);
     appendRange.setNumberFormat("@");
@@ -588,7 +625,7 @@ function enqueue_(commandType, targetDateStr, priority, source, allowDuplicate, 
       normalizedDateStr,
       priority,
       sourceLabel, // 積み元
-      status,
+      statusValue,
       now,  // 作成日時
       "",   // 処理開始日時(まだ処理されていないので空欄)
       "",   // 処理終了日時(同上)
@@ -596,6 +633,7 @@ function enqueue_(commandType, targetDateStr, priority, source, allowDuplicate, 
     ]]);
 
     console.log(`【QUE】積みました: ${commandType} / ${normalizedDateStr} / ID:${queId} / 優先度${priority} / 積み元:${sourceLabel} / ステータス:${status}`);
+    SpreadsheetApp.flush();
     return true;
   } finally {
     lock.releaseLock();
@@ -617,7 +655,7 @@ function isQueCleanupActive_(sheet) {
 
   return values.some(row => {
     const command = row[1];
-    const status = row[5];
+    const status = extractQueStatus_(row[5]);
 
     return command === QUE_CONFIG.COMMAND.CLEANUP &&
       (status === QUE_CONFIG.STATUS.PENDING || status === QUE_CONFIG.STATUS.IN_PROGRESS);
@@ -702,7 +740,7 @@ function isDuplicateInQue_(sheet, commandType, normalizedDateStr) {
   return values.some(row => {
     const rowCommand = row[1];
     const rowDate = row[2] ? normalizeDateString_(row[2]) : "";
-    const rowStatus = row[5];
+    const rowStatus = extractQueStatus_(row[5]);
 
     const isActiveStatus = (
       rowStatus === QUE_CONFIG.STATUS.PENDING ||
@@ -731,7 +769,7 @@ function renumberDateSheetCreationPriorities_(sheet) {
 
   values.forEach((row, idx) => {
     const command = row[1];
-    const status = row[5];
+    const status = extractQueStatus_(row[5]);
 
     if (command === QUE_CONFIG.COMMAND.CREATE_DAILY_SHEET && status === QUE_CONFIG.STATUS.PENDING) {
       targets.push({
@@ -771,6 +809,8 @@ function renumberDateSheetCreationPriorities_(sheet) {
 // 正規化してから返す。ここでDateオブジェクトのまま返してしまうと、
 // 後続の各命令処理(targetDateStr.substring(0,4)等)が例外で落ち、
 // ステータスが「処理中」のまま止まる原因になるため。
+// ★F列は "ステータス｜ID" 形式なので、比較前に必ず extractQueStatus_ で
+// 先頭のステータス部分だけを取り出す。
 // ============================
 
 function pickNextQueItem_(sheet) {
@@ -783,7 +823,7 @@ function pickNextQueItem_(sheet) {
 
   // 1. 「処理中」かつ10分未満の行が1件でもあれば、新規着手しない
   const hasFreshInProgress = values.some(row => {
-    if (row[5] !== QUE_CONFIG.STATUS.IN_PROGRESS) return false;
+    if (extractQueStatus_(row[5]) !== QUE_CONFIG.STATUS.IN_PROGRESS) return false;
 
     const startedAt = row[7];
     const elapsedMinutes = (now.getTime() - new Date(startedAt).getTime()) / (1000 * 60);
@@ -796,7 +836,7 @@ function pickNextQueItem_(sheet) {
   // 2. シートの並び順で最初の「未処理」を選ぶ。「待機」は読み飛ばす
   for (let idx = 0; idx < values.length; idx++) {
     const row = values[idx];
-    const status = row[5];
+    const status = extractQueStatus_(row[5]);
 
     if (status === QUE_CONFIG.STATUS.WAITING) continue; // 待機は無視
     if (status !== QUE_CONFIG.STATUS.PENDING) continue;
@@ -844,12 +884,14 @@ function findQueRowById_(sheet, queId) {
 
 // ============================
 // 指定行を「処理中」にする
+// ★F列にはA列のIDも埋め込む("処理中｜ID")。
 // ============================
 
 function markQueItemInProgress_(sheet, sheetRow) {
   const nowDate = new Date();
   const now = Utilities.formatDate(nowDate, CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
   const createdAt = String(sheet.getRange(sheetRow, 7).getDisplayValue() || "").trim();
+  const queId = String(sheet.getRange(sheetRow, 1).getDisplayValue() || "").trim();
 
   let createdAtToWrite = createdAt;
 
@@ -866,7 +908,7 @@ function markQueItemInProgress_(sheet, sheetRow) {
 
   // 「処理中」へ遷移する時は、終了日時を必ず空にして状態矛盾を防ぐ。
   sheet.getRange(sheetRow, 6, 1, 4).setValues([[
-    QUE_CONFIG.STATUS.IN_PROGRESS,
+    buildQueStatusValue_(QUE_CONFIG.STATUS.IN_PROGRESS, queId),
     createdAtToWrite,
     now,
     ""
@@ -876,16 +918,19 @@ function markQueItemInProgress_(sheet, sheetRow) {
 
 // ============================
 // 指定行を「完了」にする
+// ★F列にはA列のIDも埋め込む("完了｜ID")。
 // ============================
 
 function markQueItemDone_(sheet, sheetRow) {
   const now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+  const queId = String(sheet.getRange(sheetRow, 1).getDisplayValue() || "").trim();
   const createdAt = String(sheet.getRange(sheetRow, 7).getDisplayValue() || "").trim();
   const startedAt = String(sheet.getRange(sheetRow, 8).getDisplayValue() || "").trim();
+  const doneStatusValue = buildQueStatusValue_(QUE_CONFIG.STATUS.DONE, queId);
 
   // 完了時はF〜Iを一括更新して、部分更新や表示遅延由来の不整合を避ける。
   sheet.getRange(sheetRow, 6, 1, 4).setValues([[
-    QUE_CONFIG.STATUS.DONE,
+    doneStatusValue,
     createdAt,
     startedAt,
     now
@@ -893,12 +938,12 @@ function markQueItemDone_(sheet, sheetRow) {
 
   // 念のため再読込して、反映されていなければ1回だけ再書き込みする。
   const verify = sheet.getRange(sheetRow, 6, 1, 4).getDisplayValues()[0];
-  const verifyStatus = String(verify[0] || "").trim();
+  const verifyStatus = extractQueStatus_(verify[0]);
   const verifyFinishedAt = String(verify[3] || "").trim();
 
   if (verifyStatus !== QUE_CONFIG.STATUS.DONE || !verifyFinishedAt) {
     sheet.getRange(sheetRow, 6, 1, 4).setValues([[
-      QUE_CONFIG.STATUS.DONE,
+      doneStatusValue,
       createdAt,
       startedAt,
       now
@@ -1020,6 +1065,7 @@ function queWorkerTrigger() {
     console.log(`【QUE】処理開始: ${nextItem.commandType} / ${nextItem.targetDateStr} (優先度${nextItem.priority})`);
 
     markQueItemInProgress_(sheet, nextItem.sheetRow);
+    SpreadsheetApp.flush();
 
   } finally {
     lock.releaseLock();
@@ -1068,12 +1114,13 @@ function queWorkerTrigger() {
       const errorRow = findQueRowById_(sheet, nextItem.queId);
 
       if (errorRow) {
-        sheet.getRange(errorRow, 6).setValue(`エラー:${dispatchError.message}`); // F列(ステータス)
+        sheet.getRange(errorRow, 6).setValue(buildQueStatusValue_(`エラー:${dispatchError.message}`, nextItem.queId)); // F列(ステータス)
         sheet.getRange(errorRow, 9).setValue(now); // I列(処理終了日時)
       }
 
       console.log(`【QUE】処理失敗: ${nextItem.queId} / ${nextItem.commandType} / ${nextItem.targetDateStr} - ${dispatchError.stack || dispatchError}`);
     }
+    SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
   }
@@ -1094,6 +1141,8 @@ function queWorkerTrigger() {
 //
 // ★下(末尾)から上に向かって処理する。上から削除すると、削除の
 // たびに後続の行番号がズレるため。
+// ★F列は "ステータス｜ID" 形式なので、比較前に extractQueStatus_ で
+// 先頭のステータス部分だけを取り出す。
 // ============================
 
 const QUE_CLEANUP_THRESHOLD_MINUTES = 10;
@@ -1126,7 +1175,7 @@ function processQueCleanupCommand_() {
       for (let idx = values.length - 1; idx >= 0; idx--) {
         const row = values[idx];
         const commandType = row[1];
-        const status = row[5];
+        const status = extractQueStatus_(row[5]);
 
         // 「QUE整理」自身の行(今まさに処理中の自分)は絶対に消さない
         // ただし、過去に完了した「QUE整理」は10分経過後に削除してよい。
@@ -1169,6 +1218,7 @@ function processQueCleanupCommand_() {
   const clearedExpiredLocks = clearExpiredLocks(QUE_CLEANUP_THRESHOLD_MINUTES);
 
   console.log(`【QUE整理】完了: QUE削除${deletedCount}件 / Lock期限切れ削除${clearedExpiredLocks}件 / QUE整理WAIT設定=${setCleanupWait}`);
+  SpreadsheetApp.flush();
 }
 
 

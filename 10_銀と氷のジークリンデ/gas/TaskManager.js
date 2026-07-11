@@ -1059,6 +1059,7 @@ function taskCleanupTrigger() {
     const dedupedTasks = dedupeReservedTasksByGroupAndTarget_();
 
     console.log(`【TASK整理】完了: GUARD解除${clearedGuards}件 / WAIT解除${clearedWaitTasks}件 / pushedタイムアウト解除${resetTimedOutTasks}件 / 重複整理${dedupedTasks}件`);
+    SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
   }

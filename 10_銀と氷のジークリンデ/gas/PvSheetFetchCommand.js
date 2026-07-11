@@ -33,6 +33,17 @@
  *   ・それ以外(todayデータなし・取得失敗など、時間経過で解消し得る一時的な理由)
  *     → ステータスは「未処理」のまま変更しない(次回のPV取得実行で再挑戦する)。
  *     エラー原因欄には参考情報として記録する。
+ *
+ * ■「時間帯未経過」ゲートは行につき1回だけ(重要)
+ *   1行は特定の(NCODE,日付,時刻)を表すが、H〜AE列(0〜23時)には参考として
+ *   1日24時間ぶんの値を並べて表示する。以前はこの24列を埋めるために毎回、
+ *   24時間ぶんそれぞれで「時間帯未経過」のゲート判定をかけていたが、これは
+ *   不要な二重判定だった上、直近の1〜2時間がゲートに引っかかるだけで行全体が
+ *   「未処理」のまま固まり続けるバグの原因になっていた。
+ *   now: 「時間帯未経過」の判定は、その行が本来担当する時刻(row.hour)に
+ *   ついて1回だけ行う(PvGetter.fetchPvForDateHour_)。24列の表示データは、
+ *   ゲート抜きの PvGetter.fetchPvRawForDateHour_ でその時点で取得できて
+ *   いるぶんだけ書く(未確定の時間帯は空欄のままにし、次回実行で自然に埋まる)。
  **********************************************************************/
 
 
@@ -174,47 +185,38 @@ function processFetchPvSheetCommand_(targetDateStr) {
     }
 
     toProcess.forEach(row => {
-      // 0..23時を順に取得し、G列(7)から右へ24列分に書き込む
+      // ★「時間帯未経過」ゲートは、この行が担当する時刻(row.hour)について
+      //   1回だけ判定する。これがこの行の「未処理→完了」を左右する唯一の判定。
+      const rowResult = PvGetter.fetchPvForDateHour_(pvCache, row.ncode, "", row.dateStr, row.hour, fetchStats);
+
       const hourlyValues = new Array(24).fill("");
-      let hasTemporaryFailure = false;
-      let permanentFailureReason = "";
 
-      for (let h = 0; h < 24; h++) {
-        const fetched = PvGetter.fetchPvForDateHour_(pvCache, row.ncode, "", row.dateStr, h, fetchStats);
-
-        if (!fetched.ok) {
-          // 永続エラーなら即時処理終了(完了扱い)
-          if (PV_PERMANENT_ERROR_REASONS.indexOf(fetched.reason) !== -1) {
-            permanentFailureReason = fetched.reason;
-            break;
-          }
-
-          // 一時的な失敗(時間帯未経過等)は記録してリトライを許す
-          hasTemporaryFailure = true;
-          // 参考情報として最後の一時的理由を残す
-          hourlyValues[h] = "";
-        } else {
-          hourlyValues[h] = fetched.value;
-        }
+      if (!rowResult.ok && PV_PERMANENT_ERROR_REASONS.indexOf(rowResult.reason) !== -1) {
+        // 確定エラー(取得可能範囲外/作品削除済み等): 24列は空欄のまま書き、
+        // 行は完了扱いにして二度と処理しない。
+        sheet.getRange(row.sheetRow, 8, 1, 24).setValues([hourlyValues]);
+        applyPvSheetRow_(sheet, row, rowResult);
+        return;
       }
 
-      // UrlFetch上限例外はPvGetter側で例外を投げるためキャッチする
-      if (permanentFailureReason) {
-        // 永続失敗: applyPvSheetRow_ に任せて完了扱い + エラー理由を記録
-        applyPvSheetRow_(sheet, row, { ok: false, reason: permanentFailureReason });
-        // 書き込み済みの時間帯があればそれも反映する(時間帯データはH列(8)から24列)
-        sheet.getRange(row.sheetRow, 8, 1, 24).setValues([hourlyValues]);
-      } else if (hasTemporaryFailure) {
-        // 一時的失敗あり: 書けた時間帯だけ書き込み、ステータスは未処理のままにする
-        sheet.getRange(row.sheetRow, 8, 1, 24).setValues([hourlyValues]);
-        // 参考情報はG列(7)へ
-        sheet.getRange(row.sheetRow, 7).setValue("時間帯未経過");
+      // ★0-23時の表示用24列は、時間帯ゲートなしで、その時点でかささぎから
+      //   取得できているぶんだけ書く。まだ確定していない時間帯は空欄のまま
+      //   (次回実行で自然に埋まる)。
+      for (let h = 0; h < 24; h++) {
+        const raw = PvGetter.fetchPvRawForDateHour_(pvCache, row.ncode, "", row.dateStr, h, fetchStats);
+        if (raw.ok) {
+          hourlyValues[h] = raw.value;
+        }
+      }
+      sheet.getRange(row.sheetRow, 8, 1, 24).setValues([hourlyValues]);
+
+      if (rowResult.ok) {
+        // 対象時刻(row.hour)の取得に成功 → 通常の更新ルールを適用して完了扱い
+        applyPvSheetRow_(sheet, row, rowResult);
       } else {
-        // 全時間帯正常取得 → 時間帯データを一括書き込みし、F列については既存の
-        // 単一時間更新ロジック(applyPvSheetRow_)を流用して互換性を保つ
-        sheet.getRange(row.sheetRow, 8, 1, 24).setValues([hourlyValues]);
-        const newVal = hourlyValues[row.hour];
-        applyPvSheetRow_(sheet, row, { ok: true, value: newVal });
+        // 対象時刻(row.hour)が一時的な失敗(時間帯未経過等) →
+        // ステータスは「未処理」のまま、参考情報だけG列に記録して次回リトライ
+        sheet.getRange(row.sheetRow, 7).setValue(rowResult.reason);
       }
     });
   } catch (e) {
