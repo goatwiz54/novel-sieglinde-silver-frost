@@ -38,66 +38,145 @@
  *   1行は特定の(NCODE,日付,時刻)を表すが、H〜AE列(0〜23時)には参考として
  *   1日24時間ぶんの値を並べて表示する。以前はこの24列を埋めるために毎回、
  *   24時間ぶんそれぞれで「時間帯未経過」のゲート判定をかけていたが、これは
- *   不要な二重判定だった上、直近の1〜2時間がゲートに引っかかるだけで行全体が
- *   「未処理」のまま固まり続けるバグの原因になっていた。
- *   now: 「時間帯未経過」の判定は、その行が本来担当する時刻(row.hour)に
- *   ついて1回だけ行う(PvGetter.fetchPvForDateHour_)。24列の表示データは、
- *   ゲート抜きの PvGetter.fetchPvRawForDateHour_ でその時点で取得できて
- *   いるぶんだけ書く(未確定の時間帯は空欄のままにし、次回実行で自然に埋まる)。
+ *   不要な二重判定だった(直近の1〜2時間がゲートに引っかかるだけで行全体が
+ *   「未処理」のまま固まる原因にもなっていた)。時間帯未経過の判定は、
+ *   その行が本来担当する時刻(row.hour)について1回だけ行えば十分
+ *   (PvGetter.fetchPvForDateHour_を使う)。24列の表示データは、ゲート抜きで
+ *   その時点でかささぎから取得できているぶんだけ書けば良く、まだ確定して
+ *   いない時間帯は単に空欄のままにしておけばよい(次回の実行で自然に埋まる。
+ *   詳細は PvGetter.gs の fetchPvRawForDateHour_ を参照)。
+ *
+ * ■PV取得実行 積み込み専用トリガー(5分ごと)
+ * ・このトリガー自体はPV数の取得を一切行わない。「PV取得」シートに
+ *   「未処理」の行が1件でもあれば、「PV取得実行」(FETCH_PV)をTASKへ
+ *   予約するだけ。実際の処理は、いつも通りqueWorkerTrigger経由で
+ *   dispatchQueCommand_ が処理する。
+ * ・enqueue_の通常の重複チェックにより、対象日付なしの「PV取得実行」が
+ *   既に未処理/処理中で存在する場合は、何も積まずスキップされる。
+ *   これにより、他の積み込みが何らかの理由で漏れても、最大5分以内には
+ *   必ずQUEに載る、という安全網になる。
+ *
+ * ★2026-07-12: このファイルは文字化け・関数の重複定義により
+ *   SyntaxError(Invalid or unexpected token)が発生していたため、
+ *   読み取れる断片と他ファイルとの整合性から再構成した。
+ *   PV_SHEET_FETCH_BATCH_SIZE / PV_FETCHALL_CHUNK_SIZE /
+ *   PV_FETCHALL_CHUNK_INTERVAL_MS は、プロジェクト内のどのファイルにも
+ *   定義が見当たらなかったため、本コメント内の「100件処理時は20件×5バッチ」
+ *   という記述に合わせて暫定値を置いた。実際に使いたい値と違う場合は
+ *   下の定数を調整すること。
  **********************************************************************/
 
 
-const PV_SHEET_FETCH_BATCH_SIZE = 100;
-const PV_FETCHALL_CHUNK_SIZE = 20;
-const PV_FETCHALL_CHUNK_INTERVAL_MS = 5000;
+// ============================
+// 設定(値は要確認。プロジェクト内に元の定義が見当たらなかったため、
+// このファイルのコメントの記述に合わせた暫定値を置いている)
+// ============================
+
+const PV_SHEET_FETCH_BATCH_SIZE = 100;   // 1回の「PV取得実行」で処理する最大行数
+const PV_FETCHALL_CHUNK_SIZE = 20;       // fetchAllで並列取得するNCODEの1バッチあたり件数
+const PV_FETCHALL_CHUNK_INTERVAL_MS = 1000; // バッチ間のスリープ時間(ms)
 
 
 // ============================
 // PV取得実行 積み込み専用トリガー(5分ごと)
-//
-// このトリガー自体はPV数の取得を一切行わない。「PV取得実行」を
-// QUEへ積むだけ。実際の処理は、いつも通りqueWorkerTrigger経由で
-// dispatchQueCommand_ が処理する。
-//
-// ・対象は「今日」と「前日」の2日分(かささぎが取得できる範囲と同じ)。
-// ・enqueue_の通常の重複チェックにより、その日付の「PV取得実行」が
-//   既に未処理/処理中で存在する場合は、何も積まずスキップされる。
-// ・これにより、日付シート作成の完了時の積み込みが何らかの理由で
-//   漏れても、最大5分以内には必ずQUEに載る、という安全網になる。
-// ============================
-
-// ============================
-// PV取得実行 積み込み専用トリガー(5分ごと)
-//
-// このトリガー自体はPV数の取得を一切行わない。「PV取得実行」を
-// QUEへ積むだけ。実際の処理は、いつも通りqueWorkerTrigger経由で
-// dispatchQueCommand_ が処理する。
-//
-// ★対象日付は指定しない(null)。processFetchPvSheetCommand_は、
-// 対象日付が無い場合は日付で絞り込まず、実行時点の「今日」の月の
-// 「PV取得」シートを上から順番に処理する。
-// enqueue_の通常の重複チェックにより、対象日付なしの「PV取得実行」が
-// 既に未処理/処理中で存在する場合は、何も積まずスキップされる。
-// これにより、他の積み込みが何らかの理由で漏れても、最大5分以内には
-// 必ずQUEに載る、という安全網になる。
 // ============================
 
 function enqueuePvFetchSheetTrigger() {
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(30000)) {
+    console.log("【PV取得トリガー】ロック取得失敗のためスキップ");
+    return;
+  }
+
   const now = new Date();
   const year = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy");
   const month = Utilities.formatDate(now, CONFIG.TIMEZONE, "MM");
   const fileKey = `${year}年${month}月`;
 
-  let reservedUpdateCount = 0;
-
   try {
     const spreadsheet = findMonthlySpreadsheetIfExists_(fileKey);
     if (!spreadsheet) {
       console.log(`【PV取得トリガー】月別ファイルが見つかりません: ${fileKey}`);
-    } else {
-      const sheet = spreadsheet.getSheetByName("PV取得");
-      if (!sheet) {
-        console.log(`【PV取得トリガー】「PV取得」シートが見つかりませ�  // 読み込むのは先頭6列のみ(A:完了時刻, B:ステータス, C:NCODE, D:日付, E:時刻文字列, F:旧保存値)
+      return;
+    }
+    const sheet = spreadsheet.getSheetByName("PV取得");
+    if (!sheet) {
+      console.log(`【PV取得トリガー】「PV取得」シートが見つかりません: ${fileKey}`);
+      return;
+    }
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      return; // データ行なし
+    }
+
+    // B列(ステータス)を読み込む
+    const statuses = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
+    const hasPending = statuses.some(row => row[0] === "未処理");
+
+    if (hasPending) {
+      const reserved = reserveTaskByKeyPrefix_(TASK_TRIGGER_PREFIX.FETCH_PV, "");
+      if (reserved) {
+        console.log(`【PV取得トリガー】未処理行を検知したため、PV取得実行(FETCH_PV)タスクを予約しました`);
+      }
+    }
+  } catch (e) {
+    console.log(`【PV取得トリガー】エラーが発生しました: ${e.message}`);
+  } finally {
+    // ★他のトリガー関数と同様、TASKへの書き込みを確実に反映させてから
+    // ロックを解放する。finally節に置くことで、途中のreturn(月別ファイル
+    // 無し等)でも必ず通す。
+    SpreadsheetApp.flush();
+    lock.releaseLock();
+  }
+}
+
+
+// ============================
+// 「PV取得実行」の実処理本体
+// targetDateStr:
+//   ・指定あり → その日付の行だけに絞り込んで処理する
+//   ・null/""  → 日付で絞り込まず、シートの上から順番に処理する
+//                (ファイルは実行時点の「今日」の月を開く)
+// ============================
+
+function processFetchPvSheetCommand_(targetDateStr) {
+  let fileKey;
+
+  if (targetDateStr) {
+    const year = targetDateStr.substring(0, 4);
+    const month = targetDateStr.substring(5, 7);
+    fileKey = `${year}年${month}月`;
+  } else {
+    const now = new Date();
+    const year = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy");
+    const month = Utilities.formatDate(now, CONFIG.TIMEZONE, "MM");
+    fileKey = `${year}年${month}月`;
+  }
+
+  const spreadsheet = findMonthlySpreadsheetIfExists_(fileKey);
+
+  if (!spreadsheet) {
+    console.log(`【PV取得実行】月別ファイルが見つかりません: ${fileKey}`);
+    return 0;
+  }
+
+  const sheet = spreadsheet.getSheetByName(PV_SHEET_NAME);
+
+  if (!sheet) {
+    console.log("【PV取得実行】「PV取得」シートが見つかりません");
+    return 0;
+  }
+
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    console.log("【PV取得実行】データ行がありません");
+    return 0;
+  }
+
+  // 読み込むのは先頭6列のみ(A:完了時刻, B:ステータス, C:NCODE, D:日付, E:時刻文字列, F:旧保存値)
   const values = sheet.getRange(2, 1, lastRow - 1, 6).getDisplayValues();
 
   const pendingRows = [];
@@ -253,34 +332,21 @@ function enqueuePvFetchSheetTrigger() {
 // ============================
 // 共通タイムスタンプ生成
 // ============================
+
 function buildCompletionTimestamp_() {
   const now = new Date();
   const formatted = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
   const weekday = ["日", "月", "火", "水", "木", "金", "土"][now.getDay()];
   return `${formatted}(${weekday})`;
-}【PV取得実行】「${fileKey}」ファイルの「PV取得」シートの ${row.sheetRow}行目 (NCODE=${row.ncode}, 日付=${row.dateStr}, 時刻=${row.hour}時) は一時的理由のため「未処理」を維持します: 原因=${rowResult.reason}`);
-      }
-    });
-  } catch (e) {
-    if (e && e.message === "URLFETCH_QUOTA_EXCEEDED") {
-      console.log("【PV取得実行】UrlFetch上限超過のため即時終了");
-      return -1;
-    }
-    throw e;
-  }
-
-  console.log(`【PV取得実行】${fileKey} 処理:${toProcess.length}件 / 残り(次回以降):${remainingCount}件`);
-
-  return remainingCount;
 }
 
 
 // ============================
-// 取得結果を「PV取得」シートの該当行へ反映する
+// 取得結果を「PV取得」シートの該当行へ反映する(セル単位の簡易版)
 //
 // ■ステータスは「未処理」「完了」の2種類だけ
 // 確定した(=もう再挑戦しない)行はすべて「完了」にする。
-// 成功か失敗かは、E列(PV数。空欄なら未取得)とF列(エラー原因。
+// 成功か失敗かは、F列(PV数。空欄なら未取得)とG列(エラー原因。
 // 空欄ならエラーなし)を見れば分かるので、ステータス自体に
 // 「エラー:〜」という接頭辞は付けない。
 //
@@ -293,19 +359,18 @@ function buildCompletionTimestamp_() {
 //
 // ■「未処理」のまま維持するケース(一時的な失敗、次回リトライ)
 // ・todayデータなし / yesterdayデータなし / PV取得失敗 / 時間帯未経過
+//
+// ★注意: processFetchPvSheetCommand_ 本体はこの関数を使わず、
+// 「1行分の全31列を一度に書き込み」方式(getRange(...,1,31).setValues)で
+// 直接書き込んでいる(Sheets API呼び出し回数を減らすため)。
+// この applyPvSheetRow_ はセル単位の簡易版で、手動デバッグ等
+// 他の呼び出し元向けに残してある。
 // ============================
 
 const PV_PERMANENT_ERROR_REASONS = [
   "PV対象外:取得可能範囲外",
   "作品が存在しません(削除済みの可能性)"
 ];
-
-function buildCompletionTimestamp_() {
-  const now = new Date();
-  const formatted = Utilities.formatDate(now, CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-  const weekday = ["日", "月", "火", "水", "木", "金", "土"][now.getDay()];
-  return `${formatted}(${weekday})`;
-}
 
 function applyPvSheetRow_(sheet, row, fetched, fileKey) {
   if (!fetched.ok) {

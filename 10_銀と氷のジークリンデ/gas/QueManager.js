@@ -71,6 +71,9 @@
  *   TASKシート側の掃除をQUEと無関係な頻度の高い独立トリガーに切り出す
  *   ことで、他のtaskはQUE整理の生死に関係なく詰まりが解消され続け、
  *   QUE整理自身は次項の自己修復だけで詰まりから抜け出せるようにした。
+ *   ★なお、GUARD列(block)はTaskManager.gs側でも一切リセットしない
+ *   仕様になっている。GUARD="block"の解除は必ずスプレッドシート上で
+ *   手動で行う。
  * ・★QUE整理自身の自己修復: enqueueQueCleanupTrigger は、通常の
  *   reserveTaskByKey_(task===noneでないと予約できない)を呼ぶ前に、
  *   repairStuckTaskByKeyFromQue でCLEAR_QUE自身のTASK行が
@@ -100,6 +103,16 @@
  *   スキップして必ず積む。実行中の命令が「自分自身(処理中の行)」を
  *   続きのバッチとして再度積みたい場合(例: PV取得実行が未処理を
  *   規定件数処理した後、まだ残っていれば自分自身を再度積む)に使う。
+ *
+ * ■GUARD=blockのTASKは絶対にQUEへ積まない(二重のガード)
+ * ・第一のガード: appendQueTrigger が参照する
+ *   getReservedTaskItemsReadyForQueueing() (TaskManager.gs) が、
+ *   GUARD="block"のTASK行を「QUEへ積む候補」からそもそも除外する。
+ * ・第二のガード(最終防衛ライン): enqueue_() 自身が、積み元(source)に
+ *   対応するTASK行のGUARDを isEnqueueSourceBlocked_() でその場で
+ *   再チェックし、"block"であれば理由に関わらず積み込みを拒否する。
+ *   これは「reserve済みになった後に自己修復(repairStuckTaskByKey_)が
+ *   割り込んだ」等、第一のガードをすり抜けるケースへの保険。
  *
  * ■100行上限
  *   QUEシートのデータ行は最大100行までとする。
@@ -302,10 +315,6 @@ function clearTimedOutQueuedTasksFromQue(thresholdMinutes) {
   return clearTimedOutQueuedTasks_(thresholdMinutes);
 }
 
-function clearExpiredTaskGuardsFromQue() {
-  return clearExpiredTaskGuards_();
-}
-
 function clearExpiredWaitTasksFromQue() {
   return clearExpiredWaitTasks_();
 }
@@ -473,47 +482,68 @@ function hasActiveQueCommand_(commandType, targetDateStr) {
   });
 }
 
+// ============================
+// TASK→QUE積み込みトリガー。
+//
+// ★「TASK読み取り→QUE書き込み→TASK書き込み」を1つのロックで一括して
+// 行う。以前はenqueue_()呼び出しの中でしか短時間ロックしておらず、
+// TASKの読み取り〜書き込みの間が無防備だった(taskCleanupTrigger等の
+// 別トリガーが割り込み、GUARD/TASK/QUEの不整合を起こす原因になっていた)。
+// ============================
 function appendQueTrigger() {
-  ensureTaskSheetReadyFromQue_();
+  const lock = LockService.getScriptLock();
 
-  const taskItems = sortTaskItemsForAppend_(getReservedTaskItemsReadyForQueueingFromQue());
-
-  if (taskItems.length === 0) {
-    console.log("【TASK→QUE】reserve/none のタスクはありません");
+  if (!lock.tryLock(30000)) {
+    console.log("【TASK→QUE】ロック取得失敗のためスキップ");
     return;
   }
 
-  let appendedCount = 0;
+  try {
+    ensureTaskSheetReadyFromQue_();
 
-  taskItems.forEach(taskItem => {
-    const resolved = resolveQueCommandFromTask_(taskItem);
+    const taskItems = sortTaskItemsForAppend_(getReservedTaskItemsReadyForQueueingFromQue());
 
-    if (!resolved) {
-      console.log(`【TASK→QUE】対応するQUE命令が無いためスキップ: ${taskItem.key}`);
+    if (taskItems.length === 0) {
+      console.log("【TASK→QUE】reserve/none のタスクはありません");
       return;
     }
 
-    const targetDateStr = taskItem.target || null;
-    const didEnqueue = enqueue_(resolved.commandType, targetDateStr, resolved.priority, taskItem.key, false, resolved.initialStatus);
+    let appendedCount = 0;
 
-    if (!didEnqueue) {
-      if (hasActiveQueCommand_(resolved.commandType, targetDateStr)) {
-        if (!markTaskPushed(taskItem.key, targetDateStr)) {
-          markTaskPushedByKey(taskItem.key);
-        }
+    taskItems.forEach(taskItem => {
+      const resolved = resolveQueCommandFromTask_(taskItem);
+
+      if (!resolved) {
+        console.log(`【TASK→QUE】対応するQUE命令が無いためスキップ: ${taskItem.key}`);
+        return;
       }
-      return;
-    }
 
-    const marked = markTaskPushed(taskItem.key, targetDateStr) || markTaskPushedByKey(taskItem.key);
+      const targetDateStr = taskItem.target || null;
+      // ★既にロックを保持しているので、enqueue_()ではなく
+      // ロック無し版のenqueueNoLock_()を呼ぶ(二重ロック取得を避ける)。
+      const didEnqueue = enqueueNoLock_(resolved.commandType, targetDateStr, resolved.priority, taskItem.key, false, resolved.initialStatus);
 
-    if (marked) {
-      appendedCount++;
-    }
-  });
+      if (!didEnqueue) {
+        if (hasActiveQueCommand_(resolved.commandType, targetDateStr)) {
+          if (!markTaskPushed(taskItem.key, targetDateStr)) {
+            markTaskPushedByKey(taskItem.key);
+          }
+        }
+        return;
+      }
 
-  SpreadsheetApp.flush();
-  console.log(`【TASK→QUE】積み込み完了: ${appendedCount}件`);
+      const marked = markTaskPushed(taskItem.key, targetDateStr) || markTaskPushedByKey(taskItem.key);
+
+      if (marked) {
+        appendedCount++;
+      }
+    });
+
+    SpreadsheetApp.flush();
+    console.log(`【TASK→QUE】積み込み完了: ${appendedCount}件`);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function clearQueTrigger() {
@@ -532,6 +562,32 @@ function trigger_clear_que() {
 
 
 // ============================
+// 積み元(source)のTASK行がGUARD=blockかどうかを判定する。
+//
+// ★enqueue_の最終防衛ライン。appendQueTrigger側のフィルタ
+// (getReservedTaskItemsReadyForQueueing)が何らかの理由(自己修復処理の
+// 割り込み等)で機能しなかった場合でも、実際にQUEへ書き込む直前に
+// もう一度ここでブロックする。
+//
+// sourceに対応するTASK行が見つからない場合(自己再登板など、TASK由来
+// ではないsourceラベルの場合)はブロック対象外として扱う(false)。
+// ============================
+function isEnqueueSourceBlocked_(source) {
+  if (!source) {
+    return false;
+  }
+
+  const taskItem = getTaskItemByKey(source);
+
+  if (!taskItem) {
+    return false;
+  }
+
+  return isTaskGuardBlocked_(taskItem);
+}
+
+
+// ============================
 // QUEに命令を1件積む。
 // 同じ「命令種別+対象日付」が既に未処理/処理中で存在すればスキップする。
 //
@@ -545,6 +601,11 @@ const QUE_MANUAL_PAUSE_MARKER = "###";
 // ============================
 // QUEに命令を1件積む。
 // 同じ「命令種別+対象日付」が既に未処理/処理中で存在すればスキップする。
+//
+// ■GUARD=blockによるブロック(最優先でチェックする)
+// 積み元(source)に対応するTASK行のGUARDが"block"の場合、他のどの条件より
+// 先に積み込みを拒否する。reserve状態になっているかどうか、QUE整理の
+// 進行状況などに関係なく、blockされたTASKは絶対にQUEへ入れない。
 //
 // ■QUE整理によるブロック(積み込み側の制御。処理順とは別)
 // 「QUE整理」自身以外の命令は、QUEに「QUE整理」が未処理/処理中で
@@ -561,6 +622,8 @@ const QUE_MANUAL_PAUSE_MARKER = "###";
 //       "processUpdatePvSheetCommand_", "enqueuePvFetchSheetTrigger",
 //       "dispatchQueCommand_(自己再登板)" など。
 //   どこから積まれたQUEなのかを後から追えるようにするためのもの。
+//   ★TASKのKEYと一致する場合、そのTASK行のGUARDチェックにも使われる
+//   (isEnqueueSourceBlocked_参照)。
 //
 // allowDuplicate: trueを渡すと、重複チェックをスキップして必ず積む。
 //   用途: 自分自身(処理中の命令)が、続きのバッチとして自分自身を
@@ -584,60 +647,84 @@ function enqueue_(commandType, targetDateStr, priority, source, allowDuplicate, 
   }
 
   try {
-    const sheet = getOrCreateQueSheet_();
-
-    if (isQueManualPauseActive_(sheet)) {
-      console.log(`【QUE】手動停止マーカー(${QUE_MANUAL_PAUSE_MARKER})検知のため積み込みスキップ: ${commandType} / ${targetDateStr || ""}`);
-      return false;
-    }
-
-    const normalizedDateStr = targetDateStr ? normalizeDateString_(targetDateStr) : "";
-    const sourceLabel = source || "(不明)";
-    const status = initialStatus || QUE_CONFIG.STATUS.PENDING;
-
-    if (commandType !== QUE_CONFIG.COMMAND.CLEANUP && isQueCleanupActive_(sheet)) {
-      console.log(`【QUE】QUE整理が進行中のためスキップ: ${commandType} / ${normalizedDateStr}`);
-      return false;
-    }
-
-    if (!allowDuplicate && isDuplicateInQue_(sheet, commandType, normalizedDateStr)) {
-      console.log(`【QUE】重複のためスキップ: ${commandType} / ${normalizedDateStr}`);
-      return false;
-    }
-
-    compactQueRows_(sheet);
-
-    if (!hasRoom_(sheet)) {
-      console.log(`【QUE】上限(${QUE_MAX_ROWS}行)に達しているため追加をスキップ: ${commandType} / ${normalizedDateStr}`);
-      return false;
-    }
-
-    const now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
-    const appendRow = getQueAppendRow_(sheet);
-    const queId = generateUniqueQueId_(sheet);
-    const statusValue = buildQueStatusValue_(status, queId);
-
-    const appendRange = sheet.getRange(appendRow, 1, 1, 10);
-    appendRange.setNumberFormat("@");
-    appendRange.setValues([[
-      queId,
-      commandType,
-      normalizedDateStr,
-      priority,
-      sourceLabel, // 積み元
-      statusValue,
-      now,  // 作成日時
-      "",   // 処理開始日時(まだ処理されていないので空欄)
-      "",   // 処理終了日時(同上)
-      ""    // 監視メッセージ
-    ]]);
-
-    console.log(`【QUE】積みました: ${commandType} / ${normalizedDateStr} / ID:${queId} / 優先度${priority} / 積み元:${sourceLabel} / ステータス:${status}`);
+    const result = enqueueNoLock_(commandType, targetDateStr, priority, source, allowDuplicate, initialStatus);
     SpreadsheetApp.flush();
-    return true;
+    return result;
   } finally {
     lock.releaseLock();
   }
+}
+
+
+// ============================
+// enqueue_の本体。呼び出し元が既にLockService.getScriptLock()を保持
+// していることを前提とする(ここではロックの取得/解放を行わない)。
+//
+// ★appendQueTrigger()のように「TASK読み取り→QUE書き込み→TASK書き込み」を
+// 1つのロックで一括して行いたい場合に、こちらを直接呼ぶ。
+// enqueue_()自身は「ロック取得→enqueueNoLock_→flush→ロック解放」の
+// 薄いラッパーになっており、他の単発呼び出し元(dispatchQueCommand_の
+// 自己再登板など)は今まで通りenqueue_()を呼べばよい。
+// ============================
+function enqueueNoLock_(commandType, targetDateStr, priority, source, allowDuplicate, initialStatus) {
+  const sheet = getOrCreateQueSheet_();
+
+  if (isQueManualPauseActive_(sheet)) {
+    console.log(`【QUE】手動停止マーカー(${QUE_MANUAL_PAUSE_MARKER})検知のため積み込みスキップ: ${commandType} / ${targetDateStr || ""}`);
+    return false;
+  }
+
+  const normalizedDateStr = targetDateStr ? normalizeDateString_(targetDateStr) : "";
+  const sourceLabel = source || "(不明)";
+  const status = initialStatus || QUE_CONFIG.STATUS.PENDING;
+
+  // ★積み元TASKがGUARD=blockなら、reserve済みかどうか・QUE整理の
+  // 進行状況に関わらず、他のどのチェックよりも先に積み込みを拒否する。
+  if (isEnqueueSourceBlocked_(source)) {
+    console.log(`【QUE】積み元TASK(${sourceLabel})がGUARD=blockのため積み込みスキップ: ${commandType} / ${normalizedDateStr}`);
+    return false;
+  }
+
+  if (commandType !== QUE_CONFIG.COMMAND.CLEANUP && isQueCleanupActive_(sheet)) {
+    console.log(`【QUE】QUE整理が進行中のためスキップ: ${commandType} / ${normalizedDateStr}`);
+    return false;
+  }
+
+  if (!allowDuplicate && isDuplicateInQue_(sheet, commandType, normalizedDateStr)) {
+    console.log(`【QUE】重複のためスキップ: ${commandType} / ${normalizedDateStr}`);
+    return false;
+  }
+
+  compactQueRows_(sheet);
+
+  if (!hasRoom_(sheet)) {
+    console.log(`【QUE】上限(${QUE_MAX_ROWS}行)に達しているため追加をスキップ: ${commandType} / ${normalizedDateStr}`);
+    return false;
+  }
+
+  const now = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, "yyyy-MM-dd HH:mm:ss");
+  const appendRow = getQueAppendRow_(sheet);
+  const queId = generateUniqueQueId_(sheet);
+  const statusValue = buildQueStatusValue_(status, queId);
+
+  const appendRange = sheet.getRange(appendRow, 1, 1, 10);
+  appendRange.setNumberFormat("@");
+  appendRange.setValues([[
+    queId,
+    commandType,
+    normalizedDateStr,
+    priority,
+    sourceLabel, // 積み元
+    statusValue,
+    now,  // 作成日時
+    "",   // 処理開始日時(まだ処理されていないので空欄)
+    "",   // 処理終了日時(同上)
+    ""    // 監視メッセージ
+  ]]);
+
+  console.log(`【QUE】積みました: ${commandType} / ${normalizedDateStr} / ID:${queId} / 優先度${priority} / 積み元:${sourceLabel} / ステータス:${status}`);
+
+  return true;
 }
 
 
@@ -913,6 +1000,10 @@ function markQueItemInProgress_(sheet, sheetRow) {
     now,
     ""
   ]]);
+
+  // ★ステータス更新を書き込んだ直後に必ずログを出す(実際にシートへ
+  // 書けたかどうかを実行ログから追えるようにするため)。
+  console.log(`【QUE】ステータス書込み(処理中へ): row=${sheetRow} / ID=${queId} / F列="${buildQueStatusValue_(QUE_CONFIG.STATUS.IN_PROGRESS, queId)}"`);
 }
 
 
@@ -936,10 +1027,16 @@ function markQueItemDone_(sheet, sheetRow) {
     now
   ]]);
 
+  // ★ステータス更新を書き込んだ直後に必ずログを出す(実際にシートへ
+  // 書けたかどうかを実行ログから追えるようにするため)。
+  console.log(`【QUE】ステータス書込み(完了へ): row=${sheetRow} / ID=${queId} / F列="${doneStatusValue}" / I列(処理終了日時)="${now}"`);
+
   // 念のため再読込して、反映されていなければ1回だけ再書き込みする。
   const verify = sheet.getRange(sheetRow, 6, 1, 4).getDisplayValues()[0];
   const verifyStatus = extractQueStatus_(verify[0]);
   const verifyFinishedAt = String(verify[3] || "").trim();
+
+  console.log(`【QUE】書込み後の再読込結果: row=${sheetRow} / F列(実読取)="${verify[0]}" / I列(実読取)="${verify[3]}"`);
 
   if (verifyStatus !== QUE_CONFIG.STATUS.DONE || !verifyFinishedAt) {
     sheet.getRange(sheetRow, 6, 1, 4).setValues([[
@@ -948,33 +1045,38 @@ function markQueItemDone_(sheet, sheetRow) {
       startedAt,
       now
     ]]);
-    console.log(`【QUE】完了反映を再試行: row=${sheetRow}`);
+    console.log(`【QUE】完了反映を再試行: row=${sheetRow} / ID=${queId}`);
   }
 }
 
 
 // ============================
-// QUE行の整合性を補正する。
-// - 「処理中」なのに処理終了日時(I列)が入っている行は「完了」に直す
-// - 作成日時(G列) > 処理開始日時(H列) の逆転があれば、作成日時を開始日時へ補正
-// ============================
-
-// ============================
 // 15分トリガー: 「検索API叩け」を積むだけ
+//
+// ★TASK読み取り→TASK書き込み(reserveTaskByKey_)を1つのロックで行う。
 // ============================
-
 function enqueueFetchApiTrigger() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(QUE_CONFIG.SHEET_NAME);
+  const lock = LockService.getScriptLock();
 
-  // ★このシート存在チェック・検索ブロック確認は読み取りだけなので、
-  // ロックは取らない(enqueue_自体が内部で自分のロックを取る)。
-  if (sheet && isSearchBlockActive_(sheet)) {
-    console.log("【QUE】検索ブロックが存在するためスキップ(検索API積み込み)");
+  if (!lock.tryLock(30000)) {
+    console.log("【QUE】ロック取得失敗のためスキップ(検索API積み込み予約)");
     return;
   }
 
-  reserveTaskByKey_(TASK_TRIGGER_KEY.FETCH_SEARCH_API, "");
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(QUE_CONFIG.SHEET_NAME);
+
+    if (sheet && isSearchBlockActive_(sheet)) {
+      console.log("【QUE】検索ブロックが存在するためスキップ(検索API積み込み)");
+      return;
+    }
+
+    reserveTaskByKey_(TASK_TRIGGER_KEY.FETCH_SEARCH_API, "");
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 
@@ -1003,18 +1105,30 @@ function isSearchBlockActive_(sheet) {
 // ============================
 
 function queWorkerTrigger() {
-  // ①事前チェック(ロックなし): QUEシートが無ければ作って初回の検索API叩けを積む。
-  // enqueue_は自分でロックを取るので、ここではまだメインのロックを取らない
-  // (取った状態でenqueue_を呼ぶと、同一実行内で二重にロックを取ろうとする
-  //  ことになり、GASのLockServiceが同一実行内で再入可能かどうか未確認のため
-  //  安全側に倒して、この時点ではロックを持たない設計にしている)。
+  // ①事前チェック: QUEシートが無ければ作って初回の検索API叩けを積む。
+  // ★TASKへの書き込み(reserveTaskByKey_)を伴うため、ここも専用の
+  // ロックで「読み取り→書き込み→flush→解放」を1区間にしている
+  // (reserveTaskByKey_自体は独自にロックを取らない関数のため、二重ロックの
+  // 心配はない)。QUEシートが既に存在する通常運用時はこのブロックに
+  // 入らないので、ここでロックを取っても普段のオーバーヘッドは無い。
   {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const existingSheet = ss.getSheetByName(QUE_CONFIG.SHEET_NAME);
 
     if (!existingSheet) {
-      getOrCreateQueSheet_();
-      reserveTaskByKey_(TASK_TRIGGER_KEY.FETCH_SEARCH_API, "");
+      const bootstrapLock = LockService.getScriptLock();
+
+      if (bootstrapLock.tryLock(30000)) {
+        try {
+          getOrCreateQueSheet_();
+          reserveTaskByKey_(TASK_TRIGGER_KEY.FETCH_SEARCH_API, "");
+          SpreadsheetApp.flush();
+        } finally {
+          bootstrapLock.releaseLock();
+        }
+      } else {
+        console.log("【QUE】初回セットアップ用ロック取得失敗(次回に期待)");
+      }
     }
   }
 
@@ -1114,8 +1228,13 @@ function queWorkerTrigger() {
       const errorRow = findQueRowById_(sheet, nextItem.queId);
 
       if (errorRow) {
-        sheet.getRange(errorRow, 6).setValue(buildQueStatusValue_(`エラー:${dispatchError.message}`, nextItem.queId)); // F列(ステータス)
+        const errorStatusValue = buildQueStatusValue_(`エラー:${dispatchError.message}`, nextItem.queId);
+        sheet.getRange(errorRow, 6).setValue(errorStatusValue); // F列(ステータス)
         sheet.getRange(errorRow, 9).setValue(now); // I列(処理終了日時)
+        // ★ステータス更新を書き込んだ直後に必ずログを出す。
+        console.log(`【QUE】ステータス書込み(エラーへ): row=${errorRow} / ID=${nextItem.queId} / F列="${errorStatusValue}" / I列="${now}"`);
+      } else {
+        console.log(`【QUE】エラー記録対象の行が見つかりませんでした: ID=${nextItem.queId}`);
       }
 
       console.log(`【QUE】処理失敗: ${nextItem.queId} / ${nextItem.commandType} / ${nextItem.targetDateStr} - ${dispatchError.stack || dispatchError}`);
@@ -1247,14 +1366,30 @@ function isOlderThanMinutes_(dateValue, now, thresholdMinutes) {
 //   (repairStuckTaskByKeyFromQue)。これはQUE整理自身の自己修復であり、
 //   循環依存(自分の詰まりを直せるのは自分の実行結果だけ)を断ち切るための
 //   ものなので、CLEAR_QUEに対してのみ行う。
+//   ★このリセットはGUARD列を一切変更しない(resetTaskById_参照)。
+//   trigger_clear_queのGUARDが"block"のままであれば、直後の
+//   reserveTaskByKey_でtask=reserveにはなり得るが、enqueue_側の
+//   isEnqueueSourceBlocked_チェックによって最終的にQUEへは積まれない。
 //
 // 既に未処理/処理中の「QUE整理」が存在する場合は、enqueue_の通常の
 // 重複チェックによりスキップされる(多重登録されない)。
 // ============================
 
 function enqueueQueCleanupTrigger() {
-  repairStuckTaskByKeyFromQue(TASK_TRIGGER_KEY.CLEAR_QUE, QUE_CLEANUP_THRESHOLD_MINUTES);
-  reserveTaskByKey_(TASK_TRIGGER_KEY.CLEAR_QUE, "");
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(30000)) {
+    console.log("【QUE】ロック取得失敗のためスキップ(QUE整理積み込み予約)");
+    return;
+  }
+
+  try {
+    repairStuckTaskByKeyFromQue(TASK_TRIGGER_KEY.CLEAR_QUE, QUE_CLEANUP_THRESHOLD_MINUTES);
+    reserveTaskByKey_(TASK_TRIGGER_KEY.CLEAR_QUE, "");
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 

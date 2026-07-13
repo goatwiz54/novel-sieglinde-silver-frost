@@ -24,7 +24,7 @@
  *   - IDへの参照はこのファイル内だけで扱う
  *
  * ■TASK整理(taskCleanupTrigger, 1分ごと・QUEを一切介さない独立トリガー)
- * ・GUARD失効解除・wait失効解除・pushed放置タイムアウト解除・reserve重複整理を、
+ * ・wait失効解除・pushed放置タイムアウト解除・reserve重複整理を、
  *   QUEシート/QUE命令に一切依存せず、TASKシートの読み書きだけで完結させる。
  * ・以前はこれら全部を「QUE整理」(QUEコマンド。10分に1回、QUE経由でしか
  *   起動できない)が担っていたが、QUE整理自身のTASK行がwait/pushedのまま
@@ -34,6 +34,11 @@
  *   生死に関係なく他のtaskの詰まりは解消され続けるようにしている。
  * ・QUE整理自身の詰まりは、repairStuckTaskByKey_による自己修復
  *   (enqueueQueCleanupTrigger内で予約前に呼ばれる)で別途解消する。
+ * ・★GUARD列(block)は、このファイル内のどの処理からも一切リセットしない。
+ *   GUARD="block"の解除は必ずスプレッドシート上で手動で行う運用とする。
+ *   (以前はclearExpiredTaskGuards_で日時ベースのGUARDを自動解除していたが、
+ *   GUARD列には日時を入れない仕様(block or 空欄のみ)に変更したため、
+ *   この関数ごと廃止した)
  **********************************************************************/
 
 const TASK_CONFIG = {
@@ -139,19 +144,13 @@ function parseTaskDateTime_(value) {
   return d;
 }
 
-function isTaskGuardBlocked_(item, now) {
-  const guard = String(item.guard || "").trim();
-  const guardLower = guard.toLowerCase();
-
-  if (!guard) return false;
-  if (guardLower === "none") return false;
-  if (guardLower === "block") return true;
-
-  const guardTime = parseTaskDateTime_(guard);
-
-  if (!guardTime) return true; // 不正値は安全側でblock扱い
-
-  return now.getTime() < guardTime.getTime();
+// ============================
+// GUARD列は "block"(または空欄)のみを想定する。日時は入れない仕様。
+// "block"の時だけQUEへの積み込みをブロックする。
+// ============================
+function isTaskGuardBlocked_(item) {
+  const guard = String(item.guard || "").trim().toLowerCase();
+  return guard === "block";
 }
 
 function isTaskWaitBlocked_(item, now) {
@@ -358,7 +357,7 @@ function getTaskItemsByTaskAndQue(task, queFlag) {
 function getReservedTaskItemsReadyForQueueing() {
   const now = new Date();
   const targets = getTaskItemsByTaskAndQue(TASK_CONFIG.STATUS.RESERVE, TASK_CONFIG.QUE_FLAG.NONE)
-    .filter(item => !isTaskGuardBlocked_(item, now))
+    .filter(item => !isTaskGuardBlocked_(item))
     .filter(item => !isTaskWaitBlocked_(item, now));
 
   // 同条件で複数行ある時の順序を安定させるため、ID昇順で返す。
@@ -591,6 +590,16 @@ function updateTaskByKey_(key, updates) {
   return updateTaskById_(taskId, updates);
 }
 
+// ============================
+// TASK行を「未使用状態」へリセットする。
+//
+// ★GUARD列(F列)はここでは絶対に触らない(updatesオブジェクトに含めない)。
+// GUARD="block"は手動運用のマーカーであり、システム側のどのリセット・
+// 自己修復処理からも変更してはいけない。以前はここでguard:""を含めて
+// おり、それが原因で「GUARD=blockを設定していたのに、他のクリーンアップ
+// 処理(タイムアウト解除・wait失効解除・重複整理・自己修復)がこの行を
+// リセットした際にGUARDまで消えてしまう」というバグがあった。
+// ============================
 function resetTaskById_(taskId) {
   if (!taskId) {
     return false;
@@ -598,7 +607,6 @@ function resetTaskById_(taskId) {
 
   return updateTaskById_(taskId, {
     target: "",
-    guard: "",
     task: TASK_CONFIG.STATUS.NONE,
     taskTime: "",
     taskWaitTime: "",
@@ -799,37 +807,6 @@ function clearTimedOutQueuedTasks_(thresholdMinutes) {
   return clearedCount;
 }
 
-function clearExpiredTaskGuards_() {
-  const sheet = getOrCreateTaskSheet_();
-  const rows = getTaskDataRows_(sheet);
-  const now = new Date();
-  let clearedCount = 0;
-
-  rows.forEach(item => {
-    const guard = String(item.guard || "").trim();
-
-    if (!guard || guard.toLowerCase() === "block") {
-      return;
-    }
-
-    const guardTime = parseTaskDateTime_(guard);
-
-    if (!guardTime) {
-      return;
-    }
-
-    if (now.getTime() < guardTime.getTime()) {
-      return;
-    }
-
-    if (updateTaskById_(item.id, { guard: "" })) {
-      clearedCount++;
-    }
-  });
-
-  return clearedCount;
-}
-
 function clearExpiredWaitTasks_() {
   const sheet = getOrCreateTaskSheet_();
   const rows = getTaskDataRows_(sheet);
@@ -903,7 +880,8 @@ function dedupeReservedTasksByGroupAndTarget_() {
 
 // ============================
 // 指定キーのTASK行が「詰まっている」状態かを判定し、詰まっていれば
-// 強制的に全列をリセットする(resetTaskById_と同じ内容: none/空欄に戻す)。
+// 強制的に全列をリセットする(resetTaskById_と同じ内容: none/空欄に戻す。
+// GUARD列は resetTaskById_ 同様に一切触らない)。
 //
 // 「詰まっている」の定義(どちらか一方でも該当すれば詰まりとみなす):
 // ・QUE=pushedのまま、QUE_TIME(積み込み時刻)からthresholdMinutes分以上経過
@@ -923,6 +901,13 @@ function dedupeReservedTasksByGroupAndTarget_() {
 //   状態が壊れていない通常時は、この関数は何もしない(false を返すだけ)。
 //   後続の通常のreserveTaskByKey_(task===none必須)がそのまま機能するので、
 //   通常の予約ロジック自体には手を入れずに済む。
+//
+// ★GUARD="block"は、この自己修復によっても一切変更されない
+//   (resetTaskById_がGUARDを触らないため)。ただし、修復後に
+//   reserveTaskByKey_でtask=reserveへは遷移し得る。それでもGUARD="block"
+//   である限り、appendQueTrigger側(getReservedTaskItemsReadyForQueueing)の
+//   フィルタ、および enqueue_ 側の最終チェック(isEnqueueSourceBlocked_)の
+//   二重のガードによって、QUEへ積まれることは無い。
 // ============================
 
 function repairStuckTaskByKey_(key, thresholdMinutes) {
@@ -986,10 +971,12 @@ function repairStuckTaskByKey_(key, thresholdMinutes) {
 //   分かるラッパー)と、この位置(TaskManager.gs = TASKシート専用ファイル)
 //   の両方で明示している。
 //
-// ・GUARD失効解除(clearExpiredTaskGuards_)
 // ・wait失効解除(clearExpiredWaitTasks_) ※全task共通
 // ・pushed放置タイムアウト解除(clearTimedOutQueuedTasks_) ※全task共通
 // ・reserve重複整理(dedupeReservedTasksByGroupAndTarget_)
+//
+// ★GUARD列(block)はここでは一切リセットしない。GUARD="block"の解除は
+//   必ずスプレッドシート上で手動で行う(自動解除ロジックは廃止した)。
 //
 // 以前はこれら全部を「QUE整理」(QUE経由・10分に1回)が担っていたが、
 // QUE整理自身が詰まると誰も解除できなくなる循環依存があったため、
@@ -1053,12 +1040,13 @@ function taskCleanupTrigger() {
   }
 
   try {
-    const clearedGuards = clearExpiredTaskGuards_();
+    // ★GUARD列(block)は、このシステム内のどの処理からも一切リセットしない。
+    // 解除は必ずスプレッドシート上で手動で行う運用とする。
     const clearedWaitTasks = clearExpiredWaitTasks_();
     const resetTimedOutTasks = clearTimedOutQueuedTasks_(TASK_CLEANUP_THRESHOLD_MINUTES);
     const dedupedTasks = dedupeReservedTasksByGroupAndTarget_();
 
-    console.log(`【TASK整理】完了: GUARD解除${clearedGuards}件 / WAIT解除${clearedWaitTasks}件 / pushedタイムアウト解除${resetTimedOutTasks}件 / 重複整理${dedupedTasks}件`);
+    console.log(`【TASK整理】完了: WAIT解除${clearedWaitTasks}件 / pushedタイムアウト解除${resetTimedOutTasks}件 / 重複整理${dedupedTasks}件`);
     SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();

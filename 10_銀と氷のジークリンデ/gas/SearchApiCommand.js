@@ -30,6 +30,14 @@
  * ・これにより、シートが何万行に増えても、1回の処理コストは
  *   ウィンドウサイズ分でほぼ一定に保たれる。
  *
+ * ★2026-07-12〜: 「検索結果」は日付ごとに専用ファイル
+ *   ("なろう・更新日別PV解析_検索結果_yyyy-MM-dd")へ分割する方針に変更中。
+ *   本ファイル下部の「日付ごとの検索結果スプレッドシート」セクションで
+ *   ファイルの取得/新規作成だけを先行実装する。上記の単一シート方式
+ *   (upsertSearchResultSheet_ / buildSearchResultTailIndex_ /
+ *   mergeRowsIntoSearchResultSheet_ 等)は、書き込み処理を日付ごとの
+ *   ファイルへ向ける改修が済むまで、現状のまま残してある(未着手)。
+ *
  * ・取得データに含まれる対象日付ごとに「日付シート作成」をQUEへ積む
  *   (優先度は全部ベース値のまま積む。並べ替え・採番はワーカー側が行う)
  *
@@ -392,6 +400,89 @@ function setupSearchResultHeaders_(sheet) {
   headerRange.setBackground("#FFFF00");
   headerRange.setFontWeight("bold");
   headerRange.setHorizontalAlignment("center");
+}
+
+
+// ============================
+// 【新設】日付ごとの「検索結果」スプレッドシート(独立ファイル)
+//
+// ・「検索結果」を、テンプレート(アクティブスプレッドシート)内の単一シートに
+//   全期間分DB化して溜め込む今までの方式から、日付1件につき1ファイルを
+//   作る方式へ変更する。
+// ・ファイル名: buildSearchResultSpreadsheetName_() が組み立てる
+//   "なろう・更新日別PV解析_検索結果_yyyy-MM-dd" (CONFIG.FILE_PREFIXを流用)。
+// ・置き場所は月別ファイルと同じ CONFIG.TARGET_FOLDER_ID 配下。
+// ・中身は「検索結果」シート1枚だけ。列は既存の setupSearchResultHeaders_
+//   と全く同じ(更新日/時刻/投稿数/NCODE/前回投稿時刻/PV数+0時間/
+//   PV数+1時間/作品名の8列)。
+// ・月別ファイル(Common.gsのcreateMonthlySpreadsheetFromTemplate_)とは
+//   違い、テンプレートからのコピーは行わない。このファイルにはPV取得・
+//   サマリ・10分集計等のシートは一切不要なため、SpreadsheetApp.create()で
+//   まっさらな新規ファイルを作り、デフォルトシートをそのまま
+//   「検索結果」に改名してヘッダーだけ設定する。
+//
+// ★このセクションはファイルの取得/新規作成のみを担当する。
+//   このファイルへの実際の書き込み(upsert)処理は別途対応する
+//   (現時点では未実装。既存の upsertSearchResultSheet_ 等は
+//   単一シート方式のまま、まだ手を入れていない)。
+// ============================
+
+// 日付(yyyy-MM-dd)から、日付ごとの検索結果ファイル名を組み立てる。
+// 例: buildSearchResultSpreadsheetName_("2026-07-05")
+//     → "なろう・更新日別PV解析_検索結果_2026-07-05"
+function buildSearchResultSpreadsheetName_(dateStr) {
+  return `${CONFIG.FILE_PREFIX}_検索結果_${dateStr}`;
+}
+
+// 日付ごとの検索結果ファイルが存在する場合のみ取得する(作成しない)。
+// 見つからなければ null。
+// (Common.gs の findMonthlySpreadsheetIfExists_ と同じ役割・同じ作法)
+function findSearchResultSpreadsheetIfExists_(dateStr) {
+  const spreadSheetName = buildSearchResultSpreadsheetName_(dateStr);
+  const targetFolder = DriveApp.getFolderById(CONFIG.TARGET_FOLDER_ID);
+
+  const files = targetFolder.getFilesByName(spreadSheetName);
+
+  if (files.hasNext()) {
+    return SpreadsheetApp.open(files.next());
+  }
+
+  return null;
+}
+
+// 日付ごとの検索結果ファイルを取得する。無ければ新規作成する。
+// (Common.gs の getOrCreateMonthlySpreadsheet と同じ役割・同じ作法)
+function getOrCreateSearchResultSpreadsheet_(dateStr) {
+  const spreadSheetName = buildSearchResultSpreadsheetName_(dateStr);
+  const targetFolder = DriveApp.getFolderById(CONFIG.TARGET_FOLDER_ID);
+
+  const files = targetFolder.getFilesByName(spreadSheetName);
+
+  if (files.hasNext()) {
+    return SpreadsheetApp.open(files.next());
+  }
+
+  console.log(`【検索結果】日付別ファイルがないため新規作成: ${spreadSheetName}`);
+
+  return createSearchResultSpreadsheet_(spreadSheetName, targetFolder);
+}
+
+// まっさらな新規ファイルを作り、「検索結果」シート1枚だけを持たせる。
+// SpreadsheetApp.create()時にできるデフォルトシートをそのまま
+// 「検索結果」に改名して使う(月別ファイルのようなテンプレコピーは不要)。
+function createSearchResultSpreadsheet_(spreadSheetName, targetFolder) {
+  const newSpreadsheet = SpreadsheetApp.create(spreadSheetName);
+
+  const sheet = newSpreadsheet.getSheets()[0];
+  sheet.setName(SEARCH_RESULT_SHEET_NAME);
+  setupSearchResultHeaders_(sheet);
+
+  // マイドライブ直下にできるので、目的のフォルダへ移動する
+  const file = DriveApp.getFileById(newSpreadsheet.getId());
+  targetFolder.addFile(file);
+  DriveApp.getRootFolder().removeFile(file);
+
+  return newSpreadsheet;
 }
 
 
